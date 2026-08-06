@@ -57,7 +57,11 @@ Thumbs.db
 *.swp
 *.swo
 
-# ─── IDEs ────────────────────────────────────
+# ─── IDEs e agentes ──────────────────────────
+# Configuração desta máquina: as permissões em .claude/settings*.json têm
+# caminhos locais e PIDs de sessões antigas — não são configuração do projeto.
+# A documentação para agentes fica em .agents/, que é versionada.
+.claude/
 .vscode/settings.json
 .idea/
 *.suo

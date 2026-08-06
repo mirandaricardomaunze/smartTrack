@@ -1,0 +1,183 @@
+{
+  "orders": [
+    {
+      "id": "order-test-uuid-0001",
+      "cliente_id": "Carlos Silva",
+      "codigo_rastreio": "TRK00000001BR",
+      "status_atual": "em_transito",
+      "origem": {
+        "cidade": "São Paulo",
+        "estado": "SP",
+        "pais": "BR"
+      },
+      "destino": {
+        "cidade": "São Paulo",
+        "estado": "SP",
+        "pais": "BR"
+      },
+      "motorista_id": "driver-test-uuid-0001",
+      "valor": 2990,
+      "historico": [
+        {
+          "status": "em_transito",
+          "descricao": "Encomenda em transferência entre filiais",
+          "localizacao": "São Paulo - SP",
+          "timestamp": "2026-07-19T06:33:47.857Z"
+        },
+        {
+          "status": "coletado",
+          "descricao": "Encomenda coletada pela equipe de logística",
+          "localizacao": "São Paulo - SP",
+          "timestamp": "2026-07-19T05:33:47.857Z"
+        },
+        {
+          "status": "criado",
+          "descricao": "Pedido registrado no sistema",
+          "localizacao": "São Paulo - SP",
+          "timestamp": "2026-07-19T04:33:47.857Z"
+        }
+      ],
+      "criado_em": "2026-07-19T04:33:47.857Z",
+      "atualizado_em": "2026-07-19T06:33:47.857Z"
+    },
+    {
+      "id": "order-test-uuid-0002",
+      "cliente_id": "Ana Oliveira",
+      "codigo_rastreio": "LX987654321CN",
+      "status_atual": "no_armazem",
+      "origem": {
+        "cidade": "Shenzhen",
+        "estado": "GD",
+        "pais": "CN"
+      },
+      "destino": {
+        "cidade": "Rio de Janeiro",
+        "estado": "RJ",
+        "pais": "BR"
+      },
+      "transportadora_intl_id": "17TRACK",
+      "motorista_id": "driver-test-uuid-0002",
+      "valor": 8990,
+      "historico": [
+        {
+          "status": "no_armazem",
+          "descricao": "Recebida no hub nacional de triagem",
+          "localizacao": "Curitiba - PR",
+          "timestamp": "2026-07-19T06:33:47.857Z"
+        },
+        {
+          "status": "em_transito",
+          "descricao": "Liberado pela Receita Federal do Brasil",
+          "localizacao": "Aeroporto de Guarulhos - SP",
+          "timestamp": "2026-07-18T06:33:47.857Z"
+        },
+        {
+          "status": "em_transito",
+          "descricao": "Encomenda em trânsito rumo ao Brasil",
+          "localizacao": "Hong Kong",
+          "timestamp": "2026-07-17T06:33:47.857Z"
+        },
+        {
+          "status": "criado",
+          "descricao": "Pedido despachado pelo remetente",
+          "localizacao": "Shenzhen - China",
+          "timestamp": "2026-07-12T06:33:47.857Z"
+        }
+      ],
+      "criado_em": "2026-07-12T06:33:47.857Z",
+      "atualizado_em": "2026-07-19T06:33:47.857Z"
+    }
+  ],
+  "drivers": [
+    {
+      "id": "driver-test-uuid-0001",
+      "nome": "Marcos Souza",
+      "email": "marcos.souza@test.com",
+      "telefone": "+5511999990001",
+      "veiculo": {
+        "tipo": "MOTO",
+        "placa": "TST-1234",
+        "capacidade_kg": 20
+      },
+      "status_atual": "EM_ROTA",
+      "metricas_desempenho": {
+        "pontualidade": 96,
+        "taxa_sucesso": 98,
+        "nota_media_cliente": 4.9,
+        "total_entregas": 142
+      },
+      "gps": {
+        "lat": -23.5505,
+        "lng": -46.6333,
+        "heading": 45,
+        "speed": 35,
+        "updatedAt": "2026-07-19T06:33:47.855Z"
+      },
+      "criado_em": "2026-07-19T06:33:47.857Z"
+    },
+    {
+      "id": "driver-test-uuid-0002",
+      "nome": "Pedro Santos",
+      "email": "pedro.santos@test.com",
+      "telefone": "+5511999990002",
+      "veiculo": {
+        "tipo": "VAN",
+        "placa": "TST-5678",
+        "capacidade_kg": 500
+      },
+      "status_atual": "DISPONIVEL",
+      "metricas_desempenho": {
+        "pontualidade": 92,
+        "taxa_sucesso": 95,
+        "nota_media_cliente": 4.7,
+        "total_entregas": 88
+      },
+      "gps": {
+        "lat": -23.5629,
+        "lng": -46.6544,
+        "heading": 120,
+        "speed": 0,
+        "updatedAt": "2026-07-19T06:33:47.856Z"
+      },
+      "criado_em": "2026-07-19T06:33:47.857Z"
+    },
+    {
+      "id": "driver-test-uuid-0003",
+      "nome": "Lucas Lima",
+      "email": "lucas.lima@test.com",
+      "telefone": "+5511999990003",
+      "veiculo": {
+        "tipo": "CARRO",
+        "placa": "TST-9012",
+        "capacidade_kg": 150
+      },
+      "status_atual": "DISPONIVEL",
+      "metricas_desempenho": {
+        "pontualidade": 98,
+        "taxa_sucesso": 100,
+        "nota_media_cliente": 5,
+        "total_entregas": 210
+      },
+      "gps": {
+        "lat": -23.5489,
+        "lng": -46.6388,
+        "heading": 270,
+        "speed": 28,
+        "updatedAt": "2026-07-19T06:33:47.856Z"
+      },
+      "criado_em": "2026-07-19T06:33:47.857Z"
+    }
+  ],
+  "routes": [
+    {
+      "id": "ROT001",
+      "motorista_id": "driver-test-uuid-0001",
+      "motorista": "Marcos Souza",
+      "veiculo": "Moto (Honda Cargo)",
+      "totalParadas": 12,
+      "entregues": 5,
+      "status": "em_andamento",
+      "otimizadaEm": "2026-07-19T06:33:47.857Z"
+    }
+  ]
+}

@@ -1,0 +1,39 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Backend (monólito modular) — imagem de produção
+# Contexto de build: raiz do repositório.
+#   docker build -f infra/docker/Dockerfile.backend -t sistematrack-backend .
+# ─────────────────────────────────────────────────────────────────────────────
+FROM node:20-alpine AS build
+WORKDIR /app
+
+# Manifests + lockfile primeiro (cache de camadas). As workspaces do frontend
+# também são declaradas na raiz, por isso os seus manifests têm de existir para
+# o `npm ci` — mas só o código do backend é copiado para a imagem final.
+COPY package.json package-lock.json ./
+COPY backend ./backend
+COPY frontend ./frontend
+
+# Apenas dependências de runtime (o backend é JS puro, sem build step).
+RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
+
+# ── Imagem final: node_modules + código do backend ───────────────────────────
+FROM node:20-alpine AS runtime
+WORKDIR /app
+ENV NODE_ENV=production
+ENV PORT=4000
+
+COPY --from=build /app/node_modules ./node_modules
+COPY --from=build /app/backend ./backend
+COPY package.json ./
+
+# Correr como utilizador não-root (imagem base já traz o user `node`).
+USER node
+
+WORKDIR /app/backend/api-gateway
+EXPOSE 4000
+
+# Healthcheck bate no endpoint /health do gateway.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD wget -qO- http://127.0.0.1:4000/health >/dev/null 2>&1 || exit 1
+
+CMD ["node", "src/server.js"]

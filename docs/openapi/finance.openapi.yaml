@@ -1,0 +1,19 @@
+openapi: 3.0.3
+info: { title: SmartTrack Finance API, version: 1.0.0 }
+servers: [{ url: /v1 }]
+security: [{ bearerAuth: [] }]
+paths:
+  /finance/summary:
+    get: { summary: Indicadores financeiros, responses: { '200': { description: Caixa e obrigações } } }
+  /finance/accounts:
+    get: { summary: Listar plano de contas, responses: { '200': { description: Contas } } }
+    post: { summary: Criar conta, responses: { '201': { description: Conta criada } } }
+  /finance/entries:
+    get: { summary: Listar títulos, responses: { '200': { description: Títulos financeiros } } }
+    post: { summary: Criar conta a pagar ou receber, responses: { '201': { description: Título criado } } }
+  /finance/entries/{id}/settle:
+    post: { summary: Liquidar título, responses: { '200': { description: Título pago } } }
+  /finance/entries/{id}/void:
+    post: { summary: Anular título aberto, responses: { '200': { description: Título anulado } } }
+components:
+  securitySchemes: { bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT } }

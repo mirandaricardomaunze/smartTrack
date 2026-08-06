@@ -1,0 +1,33 @@
+# =============================================================================
+# Frontend Next.js (parametrizável) — admin-panel ou client-app.
+# Contexto de build: RAIZ do repositório.
+#   docker build -f deploy/Dockerfile.frontend \
+#     --build-arg APP=admin-panel --build-arg PORT=3010 \
+#     --build-arg NEXT_PUBLIC_API_URL=https://api.example.com -t sistematrack-admin .
+# =============================================================================
+FROM node:20-alpine
+
+WORKDIR /app
+ENV NODE_ENV=production
+
+# Workspace/dir do app (admin-panel | client-app) e porta de escuta.
+ARG APP=admin-panel
+ARG PORT=3000
+# URL pública da API — INLINED no build (Next só lê NEXT_PUBLIC_* em build-time).
+ARG NEXT_PUBLIC_API_URL=http://localhost:4000
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+ENV PORT=$PORT
+ENV APP=$APP
+
+# O `npm ci` (workspaces) exige todos os package.json do monorepo presentes.
+COPY package.json package-lock.json turbo.json ./
+COPY backend ./backend
+COPY frontend ./frontend
+RUN npm ci --no-audit --no-fund
+
+# Build do app alvo (inline do NEXT_PUBLIC_API_URL).
+RUN npm run build --workspace=$APP
+
+WORKDIR /app/frontend/$APP
+EXPOSE $PORT
+CMD ["sh", "-c", "npx next start -p ${PORT:-3000}"]

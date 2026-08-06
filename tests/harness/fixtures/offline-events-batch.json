@@ -1,0 +1,73 @@
+[
+  {
+    "note": "Eventos offline simulando motorista sem conexão por 30 minutos",
+    "driver_id": "driver-test-uuid-0001",
+    "sync_session_id": "sync-session-test-uuid-0001",
+    "events": [
+      {
+        "id": "evt-offline-0001",
+        "order_id": "order-test-uuid-0001",
+        "event_type": "STATUS_UPDATE",
+        "payload": {
+          "new_status": "coletado",
+          "notes": "Pacote coletado no remetente"
+        },
+        "device_timestamp": "2025-01-15T09:00:00.000Z",
+        "device_id": "device-test-uuid-0001",
+        "correlation_id": "corr-0001-uuid"
+      },
+      {
+        "id": "evt-offline-0002",
+        "order_id": "order-test-uuid-0001",
+        "event_type": "LOCATION",
+        "payload": {
+          "lat": -23.5505,
+          "lng": -46.6333,
+          "accuracy_meters": 5
+        },
+        "device_timestamp": "2025-01-15T09:15:00.000Z",
+        "device_id": "device-test-uuid-0001",
+        "correlation_id": "corr-0002-uuid"
+      },
+      {
+        "id": "evt-offline-0003",
+        "order_id": "order-test-uuid-0001",
+        "event_type": "STATUS_UPDATE",
+        "payload": {
+          "new_status": "saiu_para_entrega",
+          "notes": "Saindo para entrega"
+        },
+        "device_timestamp": "2025-01-15T09:30:00.000Z",
+        "device_id": "device-test-uuid-0001",
+        "correlation_id": "corr-0003-uuid"
+      }
+    ]
+  },
+  {
+    "note": "Cenário de conflito: mesmo pedido atualizado offline e pelo servidor",
+    "driver_id": "driver-test-uuid-0002",
+    "sync_session_id": "sync-session-test-uuid-0002",
+    "events": [
+      {
+        "id": "evt-conflict-0001",
+        "order_id": "order-test-uuid-0002",
+        "event_type": "STATUS_UPDATE",
+        "payload": {
+          "new_status": "insucesso",
+          "notes": "Cliente não encontrado — device timestamp mais antigo"
+        },
+        "device_timestamp": "2025-01-15T10:00:00.000Z",
+        "device_id": "device-test-uuid-0002",
+        "correlation_id": "corr-conflict-0001-uuid",
+        "_test_note": "Este evento chega mais tarde que o server_timestamp — deve perder (SERVER_WINS)"
+      }
+    ],
+    "server_concurrent_event": {
+      "order_id": "order-test-uuid-0002",
+      "event_type": "STATUS_UPDATE",
+      "new_status": "entregue",
+      "server_timestamp": "2025-01-15T10:05:00.000Z",
+      "_test_note": "Server registrou ENTREGUE depois do device — SERVER_WINS por timestamp mais recente"
+    }
+  }
+]

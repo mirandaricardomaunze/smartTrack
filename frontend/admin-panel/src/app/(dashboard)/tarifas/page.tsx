@@ -1,0 +1,215 @@
+'use client';
+
+/**
+ * @file page.tsx
+ * @description Tarifação — zonas de preço (base + por kg) e simulador de orçamento.
+ *
+ * Spec ref: docs/spec/especificacao-tecnica-v1.md § 3.13
+ *
+ * Valores em MZN (guardados em centavos). Sem emojis — apenas SVG/CSS.
+ */
+
+import React, { useState, useEffect, useCallback } from 'react';
+import { adminApi, type PricingZone, type CreateZoneData, type QuoteBreakdown, type ServiceLevel } from '@/services/api';
+import { Button, Card, Input, Select, PageHeader, DataTable } from '@/components/ui';
+
+function mzn(cents: number): string {
+  return new Intl.NumberFormat('pt-MZ', { style: 'currency', currency: 'MZN' }).format((cents ?? 0) / 100);
+}
+
+// Formulário em MZN (o utilizador escreve valores legíveis; convertemos p/ centavos).
+interface ZoneForm { code: string; name: string; base: string; perKg: string; included: string; sort: string }
+const EMPTY_ZONE: ZoneForm = { code: '', name: '', base: '', perKg: '', included: '1', sort: '0' };
+
+function toForm(z: PricingZone): ZoneForm {
+  return { code: z.code, name: z.name, base: String(z.base_cents / 100), perKg: String(z.per_kg_cents / 100), included: String(z.included_kg), sort: String(z.sort_order) };
+}
+
+export default function TarifasPage() {
+  const [zones, setZones] = useState<PricingZone[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  const [formOpen, setFormOpen] = useState(false);
+  const [editing, setEditing] = useState<PricingZone | null>(null);
+  const [form, setForm] = useState<ZoneForm>({ ...EMPTY_ZONE });
+  const [submitting, setSubmitting] = useState(false);
+  const [formError, setFormError] = useState('');
+
+  // Simulador
+  const [simZone, setSimZone] = useState('');
+  const [simWeight, setSimWeight] = useState('2.5');
+  const [simService, setSimService] = useState<ServiceLevel>('normal');
+  const [quote, setQuote] = useState<QuoteBreakdown | null>(null);
+  const [quoteErr, setQuoteErr] = useState('');
+
+  const load = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError('');
+      const list = await adminApi.getPricingZones();
+      setZones(list);
+      if (!simZone && list.length) setSimZone(list.find((z) => z.active)?.code ?? list[0].code);
+    } catch {
+      setError('Não foi possível carregar as zonas de tarifação.');
+      setZones([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [simZone]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  const openCreate = () => { setEditing(null); setForm({ ...EMPTY_ZONE }); setFormError(''); setFormOpen(true); };
+  const openEdit = (z: PricingZone) => { setEditing(z); setForm(toForm(z)); setFormError(''); setFormOpen(true); };
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!form.code.trim() || !form.name.trim()) { setFormError('Código e nome são obrigatórios.'); return; }
+    setSubmitting(true);
+    setFormError('');
+    const payload: CreateZoneData = {
+      code: form.code.trim(),
+      name: form.name.trim(),
+      base_cents: Math.round((parseFloat(form.base) || 0) * 100),
+      per_kg_cents: Math.round((parseFloat(form.perKg) || 0) * 100),
+      included_kg: parseFloat(form.included) || 0,
+      sort_order: parseInt(form.sort, 10) || 0,
+    };
+    try {
+      if (editing) await adminApi.updatePricingZone(editing.id, payload);
+      else await adminApi.createPricingZone(payload);
+      setFormOpen(false);
+      await load();
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : 'Falha ao guardar a zona.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const toggleActive = async (z: PricingZone) => {
+    try {
+      if (z.active) await adminApi.deactivatePricingZone(z.id);
+      else await adminApi.updatePricingZone(z.id, { active: true });
+      await load();
+    } catch {
+      setError('Falha ao atualizar a zona.');
+    }
+  };
+
+  const runQuote = useCallback(async () => {
+    if (!simZone) { setQuote(null); return; }
+    setQuoteErr('');
+    try {
+      setQuote(await adminApi.quotePrice({
+        zone_code: simZone,
+        weight_grams: Math.round((parseFloat(simWeight) || 0) * 1000),
+        service: simService,
+      }));
+    } catch (err) {
+      setQuote(null);
+      setQuoteErr(err instanceof Error ? err.message : 'Falha ao calcular.');
+    }
+  }, [simZone, simWeight, simService]);
+
+  useEffect(() => { void runQuote(); }, [runQuote]);
+
+  return (
+    <div className="flex flex-col gap-6">
+      <PageHeader
+        title="Tarifação"
+        description="Zonas de preço (base + por kg) e simulador de orçamento."
+        actions={<Button variant="primary" onClick={openCreate}>Nova Zona</Button>}
+      />
+
+      {error && (
+        <div className="bg-amber-500/10 border border-amber-500/20 text-amber-400 p-4 rounded-2xl text-xs flex justify-between items-center gap-3">
+          <span>{error}</span>
+          <Button size="sm" variant="secondary" onClick={() => load()}>Tentar Novamente</Button>
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-6 items-start">
+        <DataTable<PricingZone>
+          data={zones}
+          loading={loading}
+          getRowKey={(z) => z.id}
+          emptyTitle="Nenhuma zona configurada"
+          emptyDescription="Crie a primeira zona de tarifação."
+          columns={[
+            { key: 'name', header: 'Zona', cell: (z) => (
+              <div className="flex flex-col">
+                <span className="font-semibold text-slate-200">{z.name}</span>
+                <span className="font-mono text-[11px] text-slate-500">{z.code}</span>
+              </div>
+            ) },
+            { key: 'base', header: 'Base', headerClassName: 'text-right', cellClassName: 'text-right font-mono text-xs', cell: (z) => mzn(z.base_cents) },
+            { key: 'perkg', header: 'Por kg', headerClassName: 'text-right', cellClassName: 'text-right font-mono text-xs', cell: (z) => mzn(z.per_kg_cents) },
+            { key: 'incl', header: 'Incluído', headerClassName: 'text-center', cellClassName: 'text-center text-xs', cell: (z) => `${z.included_kg} kg` },
+            { key: 'active', header: 'Estado', cell: (z) => z.active
+              ? <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400">Ativa</span>
+              : <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-500/15 text-slate-400">Inativa</span> },
+            { key: 'actions', header: '', headerClassName: 'text-right', cellClassName: 'text-right', cell: (z) => (
+              <div className="flex justify-end gap-1.5">
+                <Button size="sm" variant="ghost" onClick={() => openEdit(z)}>Editar</Button>
+                <Button size="sm" variant="ghost" onClick={() => toggleActive(z)} className={z.active ? 'text-red-400' : 'text-emerald-400'}>{z.active ? 'Desativar' : 'Ativar'}</Button>
+              </div>
+            ) },
+          ]}
+        />
+
+        {/* Simulador */}
+        <Card className="flex flex-col gap-4">
+          <div>
+            <h3 className="text-sm font-bold text-slate-100">Simulador de orçamento</h3>
+            <p className="text-xs text-slate-500">Calcule o frete para uma zona e peso.</p>
+          </div>
+          <Select label="Zona" value={simZone} onChange={(e) => setSimZone(e.target.value)}
+            options={zones.filter((z) => z.active).map((z) => ({ value: z.code, label: z.name }))} className="text-xs" />
+          <Input label="Peso (kg)" type="number" min="0" step="0.1" value={simWeight} onChange={(e) => setSimWeight(e.target.value)} className="text-xs" />
+          <Select label="Serviço" value={simService} onChange={(e) => setSimService(e.target.value as ServiceLevel)}
+            options={[{ value: 'normal', label: 'Normal' }, { value: 'express', label: 'Expresso' }]} className="text-xs" />
+
+          {quoteErr && <p className="text-xs text-red-400">{quoteErr}</p>}
+          {quote && (
+            <div className="rounded-xl bg-surface-elevated p-3 flex flex-col gap-1.5 text-xs">
+              <div className="flex justify-between"><span className="text-slate-400">Base</span><span className="font-mono">{mzn(quote.base_cents)}</span></div>
+              <div className="flex justify-between"><span className="text-slate-400">Peso</span><span className="font-mono">{mzn(quote.weight_cents)}</span></div>
+              {quote.service_cents > 0 && <div className="flex justify-between"><span className="text-slate-400">Serviço</span><span className="font-mono">{mzn(quote.service_cents)}</span></div>}
+              {quote.cod_surcharge_cents > 0 && <div className="flex justify-between"><span className="text-slate-400">Sobretaxa COD</span><span className="font-mono">{mzn(quote.cod_surcharge_cents)}</span></div>}
+              <div className="flex justify-between border-t border-white/10 pt-1.5 mt-1 font-bold text-slate-100"><span>Total</span><span className="font-mono">{mzn(quote.total_cents)}</span></div>
+            </div>
+          )}
+        </Card>
+      </div>
+
+      {/* Modal criar/editar zona */}
+      {formOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setFormOpen(false)}>
+          <Card className="w-full max-w-md" onClick={(e) => e.stopPropagation()}>
+            <form onSubmit={submit} className="flex flex-col gap-4">
+              <div className="flex items-center justify-between">
+                <h2 className="text-base font-bold text-slate-100">{editing ? 'Editar zona' : 'Nova zona'}</h2>
+                <Button type="button" variant="ghost" size="sm" onClick={() => setFormOpen(false)}>Fechar</Button>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <Input label="Código" value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} className="text-xs font-mono" disabled={!!editing} placeholder="MAPUTO_CITY" />
+                <Input label="Ordem" type="number" value={form.sort} onChange={(e) => setForm({ ...form, sort: e.target.value })} className="text-xs" />
+                <Input label="Nome" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="text-xs" containerClassName="col-span-2" />
+                <Input label="Preço base (MZN)" type="number" min="0" step="0.01" value={form.base} onChange={(e) => setForm({ ...form, base: e.target.value })} className="text-xs" />
+                <Input label="Por kg (MZN)" type="number" min="0" step="0.01" value={form.perKg} onChange={(e) => setForm({ ...form, perKg: e.target.value })} className="text-xs" />
+                <Input label="Peso incluído (kg)" type="number" min="0" step="0.1" value={form.included} onChange={(e) => setForm({ ...form, included: e.target.value })} className="text-xs" containerClassName="col-span-2" />
+              </div>
+              {formError && <p className="text-xs text-red-400">{formError}</p>}
+              <div className="flex justify-end gap-2">
+                <Button type="button" variant="secondary" onClick={() => setFormOpen(false)}>Cancelar</Button>
+                <Button type="submit" variant="primary" loading={submitting}>{editing ? 'Guardar' : 'Criar'}</Button>
+              </div>
+            </form>
+          </Card>
+        </div>
+      )}
+    </div>
+  );
+}

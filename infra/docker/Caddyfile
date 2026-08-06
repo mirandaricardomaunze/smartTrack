@@ -1,0 +1,15 @@
+# Caddy — reverse proxy com HTTPS automático (Let's Encrypt).
+# Requer DNS público a apontar SITE_DOMAIN e API_DOMAIN para este servidor,
+# e as portas 80/443 abertas. Os domínios vêm do ambiente (docker-compose).
+
+# Site do cliente (Next.js)
+{$SITE_DOMAIN} {
+	encode zstd gzip
+	reverse_proxy client:3011
+}
+
+# API (backend / gateway)
+{$API_DOMAIN} {
+	encode zstd gzip
+	reverse_proxy backend:4000
+}

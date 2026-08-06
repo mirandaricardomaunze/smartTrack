@@ -1,0 +1,55 @@
+openapi: 3.0.3
+info: { title: SmartTrack Recursos Humanos API, version: 1.0.0 }
+servers: [{ url: /v1 }]
+security: [{ bearerAuth: [] }]
+paths:
+  /hr/stats:
+    get: { summary: Indicadores de RH, responses: { '200': { description: Indicadores agregados } } }
+  /hr/departments:
+    get: { summary: Listar departamentos, responses: { '200': { description: Lista de departamentos } } }
+    post: { summary: Criar departamento, responses: { '201': { description: Departamento criado } } }
+  /hr/employees:
+    get: { summary: Listar e pesquisar colaboradores, responses: { '200': { description: Lista paginada } } }
+    post: { summary: Criar colaborador, responses: { '201': { description: Colaborador criado } } }
+  /hr/employees/{id}:
+    parameters: [{ in: path, name: id, required: true, schema: { type: string } }]
+    get: { summary: Obter colaborador, responses: { '200': { description: Colaborador } } }
+    put: { summary: Atualizar colaborador, responses: { '200': { description: Colaborador atualizado } } }
+  /hr/leaves:
+    get: { summary: Listar férias e licenças, responses: { '200': { description: Lista de pedidos } } }
+    post: { summary: Submeter pedido, responses: { '201': { description: Pedido criado } } }
+  /hr/leaves/{id}/decision:
+    post:
+      summary: Aprovar ou recusar pedido
+      parameters: [{ in: path, name: id, required: true, schema: { type: string } }]
+      responses: { '200': { description: Pedido decidido } }
+  /hr/attendance:
+    get: { summary: Listar assiduidade por data ou colaborador, responses: { '200': { description: Registos de ponto } } }
+    post: { summary: Registar ou ajustar entrada e saída, responses: { '201': { description: Ponto calculado } } }
+  /hr/attendance/stats:
+    get: { summary: Resumo de assiduidade, responses: { '200': { description: Presenças, atrasos e minutos } } }
+  /hr/payroll:
+    get: { summary: Listar folhas salariais, responses: { '200': { description: Folhas mensais } } }
+    post: { summary: Processar folha mensal, responses: { '201': { description: Folha criada ou existente } } }
+  /hr/payroll/{id}:
+    get: { summary: Consultar folha e linhas, responses: { '200': { description: Folha detalhada } } }
+  /hr/payroll/{id}/items/{employeeId}:
+    put: { summary: Ajustar proventos e descontos, responses: { '200': { description: Folha recalculada } } }
+  /hr/payroll/{id}/status:
+    post: { summary: Aprovar ou marcar folha como paga, responses: { '200': { description: Estado atualizado } } }
+  /hr/recruitment/jobs:
+    get: { summary: Listar vagas, responses: { '200': { description: Vagas e contagem de candidatos } } }
+    post: { summary: Criar vaga, responses: { '201': { description: Vaga criada } } }
+  /hr/recruitment/candidates:
+    get: { summary: Listar candidatos, responses: { '200': { description: Pipeline de candidatos } } }
+    post: { summary: Registar candidato, responses: { '201': { description: Candidato criado } } }
+  /hr/recruitment/candidates/{id}/stage:
+    post: { summary: Alterar etapa do candidato, responses: { '200': { description: Etapa atualizada } } }
+  /hr/performance:
+    get: { summary: Listar avaliações, responses: { '200': { description: Avaliações de desempenho } } }
+    post: { summary: Criar avaliação, responses: { '201': { description: Avaliação em rascunho } } }
+  /hr/performance/{id}/complete:
+    post: { summary: Concluir avaliação, responses: { '200': { description: Avaliação concluída } } }
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }

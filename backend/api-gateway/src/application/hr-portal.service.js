@@ -1,0 +1,12 @@
+'use strict';const crypto=require('crypto');const{HrPortalRepository:repo,UserRepository}=require('../infrastructure/pg.repository');const{hashPassword}=require('../infrastructure/password.utils');const hr=require('./hr.service');const{assertResourceLimit}=require('./subscriptions.service');
+class PortalError extends Error{constructor(message,statusCode=400){super(message);this.statusCode=statusCode;}}
+const email=v=>String(v||'').trim().toLowerCase();const validEmail=v=>/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);const strongPassword=v=>typeof v==='string'&&v.length>=10&&/[A-Z]/.test(v)&&/[a-z]/.test(v)&&/\d/.test(v);
+async function resolveEmployee(userId){const employee=await repo.findEmployeeByUser(userId);if(!employee)throw new PortalError('Conta não vinculada a um colaborador ativo.',403);if(employee.status!=='active'&&employee.status!=='on_leave')throw new PortalError('Acesso do colaborador inativo.',403);return employee;}
+async function dashboard(userId){const employee=await resolveEmployee(userId);return repo.dashboard(employee.id);}
+async function requestLeave(userId,dto){const employee=await resolveEmployee(userId);return hr.createLeave({...dto,employee_id:employee.id});}
+async function provision(dto){const normalized=email(dto.email);if(!validEmail(normalized))throw new PortalError('E-mail inválido.');if(!strongPassword(dto.password))throw new PortalError('A senha inicial deve ter 10 caracteres, maiúscula, minúscula e número.');await UserRepository.ensureTable();if(await UserRepository.findByEmailWithHash(normalized))throw new PortalError('Já existe uma conta com este e-mail.',409);
+ // A conta do colaborador é um utilizador como outro qualquer: conta para o
+ // limite do plano (spec § 2.5). Sem isto, o portal era uma porta lateral para
+ // criar utilizadores acima da quota contratada.
+ await assertResourceLimit('users');const employee=await require('../infrastructure/pg.repository').HrRepository.findEmployee(dto.employee_id);if(!employee)throw new PortalError('Colaborador não encontrado.',404);try{return await repo.provisionAccount({employeeId:employee.id,user:{id:crypto.randomUUID(),name:employee.full_name,email:normalized,password_hash:hashPassword(dto.password)}});}catch(e){if(e.code==='23505')throw new PortalError('E-mail ou vínculo já utilizado.',409);if(e.code==='EMPLOYEE_LINKED')throw new PortalError(e.message,409);if(e.code==='EMPLOYEE_NOT_FOUND')throw new PortalError(e.message,404);throw e;}}
+module.exports={dashboard,requestLeave,provision,resolveEmployee,validEmail,strongPassword,PortalError};

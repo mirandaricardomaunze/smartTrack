@@ -1,0 +1,71 @@
+# ─── Dependências ────────────────────────────
+node_modules/
+.npm/
+.pnp/
+.pnp.js
+
+# ─── Build outputs ───────────────────────────
+dist/
+build/
+.next/
+out/
+*.tsbuildinfo
+
+# ─── Variáveis de Ambiente (NUNCA commitar) ──
+.env
+.env.local
+.env.development
+.env.production
+.env.staging
+.env.prod
+!.env.example
+!.env.prod.example
+
+# ─── Logs ────────────────────────────────────
+logs/
+*.log
+migrate-log.txt
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ─── Cache ───────────────────────────────────
+.turbo/
+.cache/
+.eslintcache
+.parcel-cache/
+
+# ─── Testes ──────────────────────────────────
+coverage/
+.nyc_output/
+
+# ─── Mobile ──────────────────────────────────
+# React Native
+ios/
+android/
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+*.orig.*
+web-build/
+
+# ─── Sistema ─────────────────────────────────
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# ─── IDEs ────────────────────────────────────
+.vscode/settings.json
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# ─── Docker ──────────────────────────────────
+infra/docker/postgres_data/
+infra/docker/redis_data/

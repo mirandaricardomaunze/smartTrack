@@ -1,0 +1,25 @@
+# =============================================================================
+# Caddy — reverse proxy com HTTPS automático (Let's Encrypt).
+# Os domínios e o email ACME vêm do ambiente (ver .env / docker-compose).
+# =============================================================================
+{
+	email {$ACME_EMAIL}
+}
+
+# ── API (backend) ─────────────────────────────────────────────────────────────
+{$DOMAIN_API} {
+	encode gzip
+	reverse_proxy backend:4000
+}
+
+# ── Painel administrativo ─────────────────────────────────────────────────────
+{$DOMAIN_ADMIN} {
+	encode gzip
+	reverse_proxy admin:3010
+}
+
+# ── Site público do cliente ───────────────────────────────────────────────────
+{$DOMAIN_APP} {
+	encode gzip
+	reverse_proxy client:3011
+}

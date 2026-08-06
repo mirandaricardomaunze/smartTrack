@@ -1,0 +1,37 @@
+{
+  "name": "api-gateway",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node src/server.js",
+    "migrate": "node scripts/migrate-all.js",
+    "migrate:hr": "node scripts/migrate-hr.js",
+    "migrate:hr:payroll": "node scripts/migrate-hr-payroll.js",
+    "migrate:hr:recruitment": "node scripts/migrate-hr-recruitment.js",
+    "migrate:hr:performance": "node scripts/migrate-hr-performance.js",
+    "migrate:hr:operations": "node scripts/migrate-hr-operations.js",
+    "migrate:hr:portal": "node scripts/migrate-hr-portal.js",
+    "migrate:finance": "node scripts/migrate-finance.js",
+    "migrate:fleet": "node scripts/migrate-fleet.js",
+    "migrate:reset": "node scripts/migrate-all.js --reset-core",
+    "migrate:core": "node src/infrastructure/migrate.js",
+    "migrate:bootstrap": "node scripts/bootstrap-migrate.js",
+    "seed:superadmin": "node scripts/seed-superadmin.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "backup": "node scripts/backup.js",
+    "backup:plan": "node scripts/backup.js --dry-run",
+    "backup:verify": "node scripts/backup-verify.js",
+    "restore": "node scripts/restore.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^17.4.2",
+    "express": "^4.19.2",
+    "pg": "^8.22.0"
+  },
+  "devDependencies": {
+    "vitest": "^1.6.0"
+  }
+}

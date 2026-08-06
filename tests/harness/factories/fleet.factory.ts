@@ -1,0 +1,3 @@
+export class FleetVehicleFactory { static build(overrides:Record<string,unknown>={}){return{plate:'ABC-12-34',make:'Toyota',model:'Hilux',year:2023,vehicle_type:'pickup',fuel_type:'diesel',odometer_km:50000,status:'available',insurance_expiry:'2027-01-31',inspection_expiry:'2026-12-31',...overrides};} }
+export class FuelEntryFactory { static build(overrides:Record<string,unknown>={}){return{vehicle_id:'vehicle-test-001',fuel_date:'2026-08-01',odometer_km:50500,volume_ml:50000,cost_cents:450000,full_tank:true,station:'Posto Maputo',...overrides};} }
+export class FuelConsumptionFactory { static build(overrides:Record<string,unknown>={}){return{previous_odometer_km:50000,odometer_km:50500,volume_ml:50000,consumption_l_per_100km:10,...overrides};} }

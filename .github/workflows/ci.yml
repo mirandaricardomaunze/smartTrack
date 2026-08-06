@@ -1,0 +1,95 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancela execuções antigas do mesmo ref quando chega um novo push.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # ── Verificações rápidas (sem base de dados) ────────────────────────────────
+  check:
+    name: Typecheck · Test · Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Instalar dependências
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Testes unitários
+        run: npm run test
+
+      - name: Build
+        run: npm run build
+        env:
+          NEXT_TELEMETRY_DISABLED: '1'
+          # URL pública da API embutida no build do cliente (placeholder em CI).
+          NEXT_PUBLIC_API_URL: https://api.exemplo.mz
+
+  # ── Testes de integração contra PostgreSQL real ─────────────────────────────
+  integration:
+    name: Integração (PostgreSQL)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: track
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Instalar dependências
+        run: npm ci
+
+      # O helper pg-env.js lê as credenciais de backend/api-gateway/.env.
+      - name: Preparar .env do gateway (credenciais do serviço Postgres)
+        run: |
+          cat > backend/api-gateway/.env <<'EOF'
+          PGHOST=localhost
+          PGPORT=5432
+          PGUSER=postgres
+          PGPASSWORD=postgres
+          PGDATABASE=track
+          JWT_SECRET=ci_test_secret
+          EOF
+
+      - name: Migrar (núcleo + módulos) numa base limpa
+        run: npm run migrate -- --reset-core
+        working-directory: backend/api-gateway
+
+      - name: Testes de integração
+        run: npm run test:integration

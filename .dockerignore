@@ -1,0 +1,18 @@
+# Nunca enviar para o contexto de build
+**/node_modules
+**/.next
+**/.turbo
+**/dist
+**/coverage
+.git
+.github
+**/*.log
+
+# Segredos — nunca no contexto de build (vêm por ambiente/compose)
+**/.env
+**/.env.*
+!**/.env.example
+
+# Artefactos locais
+.claude
+plans

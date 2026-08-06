@@ -1,0 +1,126 @@
+[
+  {
+    "carrier": "17TRACK",
+    "raw_status": "Delivered",
+    "expected_canonical": "delivered"
+  },
+  {
+    "carrier": "17TRACK",
+    "raw_status": "In Transit",
+    "expected_canonical": "in_transit"
+  },
+  {
+    "carrier": "17TRACK",
+    "raw_status": "Out for Delivery",
+    "expected_canonical": "out_for_delivery"
+  },
+  {
+    "carrier": "17TRACK",
+    "raw_status": "Arrived at warehouse",
+    "expected_canonical": "at_warehouse"
+  },
+  {
+    "carrier": "17TRACK",
+    "raw_status": "Picked up",
+    "expected_canonical": "collected"
+  },
+  {
+    "carrier": "17TRACK",
+    "raw_status": "Delivery failed",
+    "expected_canonical": "failed"
+  },
+  {
+    "carrier": "17TRACK",
+    "raw_status": "Returned to sender",
+    "expected_canonical": "cancelled"
+  },
+  {
+    "carrier": "17TRACK",
+    "raw_status": "InfoReceived",
+    "expected_canonical": "created",
+    "note": "vocabulário real da API 17TRACK v2.2 (stage)"
+  },
+  {
+    "carrier": "17TRACK",
+    "raw_status": "PickedUp",
+    "expected_canonical": "collected",
+    "note": "stage real 17TRACK"
+  },
+  {
+    "carrier": "17TRACK",
+    "raw_status": "InTransit",
+    "expected_canonical": "in_transit",
+    "note": "stage real 17TRACK"
+  },
+  {
+    "carrier": "17TRACK",
+    "raw_status": "AvailableForPickup",
+    "expected_canonical": "at_warehouse",
+    "note": "stage real 17TRACK"
+  },
+  {
+    "carrier": "17TRACK",
+    "raw_status": "OutForDelivery",
+    "expected_canonical": "out_for_delivery",
+    "note": "stage real 17TRACK"
+  },
+  {
+    "carrier": "17TRACK",
+    "raw_status": "DeliveryFailure",
+    "expected_canonical": "failed",
+    "note": "stage real 17TRACK"
+  },
+  {
+    "carrier": "17TRACK",
+    "raw_status": "Returned",
+    "expected_canonical": "cancelled",
+    "note": "stage real 17TRACK"
+  },
+  {
+    "carrier": "CAINIAO",
+    "raw_status": "PACKAGE_ARRIVED",
+    "expected_canonical": "at_warehouse"
+  },
+  {
+    "carrier": "CAINIAO",
+    "raw_status": "PACKAGE_DELIVERING",
+    "expected_canonical": "out_for_delivery"
+  },
+  {
+    "carrier": "CAINIAO",
+    "raw_status": "SIGN_IN",
+    "expected_canonical": "delivered"
+  },
+  {
+    "carrier": "CAINIAO",
+    "raw_status": "FAILED_ATTEMPT",
+    "expected_canonical": "failed"
+  },
+  {
+    "carrier": "CORREIOS_BR",
+    "raw_status": "Objeto entregue ao destinatário",
+    "expected_canonical": "delivered"
+  },
+  {
+    "carrier": "CORREIOS_BR",
+    "raw_status": "Objeto em transferência - por favor aguarde",
+    "expected_canonical": "in_transit"
+  },
+  {
+    "carrier": "CORREIOS_BR",
+    "raw_status": "Objeto saiu para entrega ao destinatário",
+    "expected_canonical": "out_for_delivery"
+  },
+  {
+    "carrier": "UNKNOWN_CARRIER",
+    "raw_status": "anything",
+    "expected_canonical": "in_transit",
+    "note": "Carrier desconhecido → default IN_TRANSIT + alerta emitido"
+  },
+  {
+    "carrier": "17TRACK",
+    "raw_status": "UNKNOWN_NEW_STATUS",
+    "expected_canonical": "in_transit",
+    "note": "Status desconhecido para carrier conhecido → default IN_TRANSIT + log para ops"
+  }
+]

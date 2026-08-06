@@ -1,0 +1,61 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "OrderStatusChangedEvent",
+  "description": "Publicado pelo orders-service quando o status de um pedido muda.",
+  "type": "object",
+  "required": ["eventType", "schemaVersion", "correlationId", "timestamp", "sourceService", "payload"],
+  "properties": {
+    "eventType": {
+      "type": "string",
+      "const": "ORDER_STATUS_CHANGED"
+    },
+    "schemaVersion": {
+      "type": "string",
+      "const": "1.0"
+    },
+    "correlationId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "ID único para rastrear este evento através dos serviços."
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Timestamp UTC do momento em que o evento foi gerado."
+    },
+    "sourceService": {
+      "type": "string",
+      "const": "orders-service"
+    },
+    "payload": {
+      "type": "object",
+      "required": ["pedidoId", "previousStatus", "newStatus", "changedBy", "changedByRole"],
+      "properties": {
+        "pedidoId": { "type": "string", "format": "uuid" },
+        "codigoRastreio": { "type": "string" },
+        "previousStatus": {
+          "type": "string",
+          "enum": ["criado","coletado","em_transito","no_armazem","aguardando_destino","saiu_para_entrega","entregue","insucesso","cancelado"]
+        },
+        "newStatus": {
+          "type": "string",
+          "enum": ["criado","coletado","em_transito","no_armazem","aguardando_destino","saiu_para_entrega","entregue","insucesso","cancelado"]
+        },
+        "changedBy": { "type": "string", "description": "userId ou serviceId" },
+        "changedByRole": { "type": "string", "enum": ["CLIENTE","MOTORISTA","SUPORTE","ADMIN","SISTEMA"] },
+        "localizacao": {
+          "type": "object",
+          "properties": {
+            "lat": { "type": "number" },
+            "lng": { "type": "number" }
+          }
+        },
+        "deviceTimestamp": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp do device (offline sync). Pode ser null para eventos online."
+        }
+      }
+    }
+  }
+}

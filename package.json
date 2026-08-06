@@ -1,0 +1,32 @@
+{
+  "name": "sistematrack-root",
+  "private": true,
+  "packageManager": "npm@11.6.2",
+  "workspaces": [
+    "backend/shared/*",
+    "backend/*-service",
+    "backend/api-gateway",
+    "frontend/client-app",
+    "frontend/driver-app",
+    "frontend/admin-panel"
+  ],
+  "scripts": {
+    "dev:backend": "npm run dev --workspace=api-gateway",
+    "dev:frontend": "turbo run dev --filter=admin-panel --filter=client-app --filter=driver-app",
+    "dev": "turbo run dev --filter=api-gateway --filter=admin-panel --filter=client-app --filter=driver-app",
+    "migrate:backend": "npm run migrate --workspace=api-gateway",
+    "build": "turbo run build",
+    "test": "turbo run test",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck"
+  },
+  "devDependencies": {
+    "turbo": "^2.0.0",
+    "typescript": "^5.4.0"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "npm": ">=10.0.0"
+  }
+}

@@ -1,0 +1,43 @@
+/**
+ * @file migrate-fiscal.js
+ * @description Migração ADITIVA da conformidade fiscal (séries, assinatura, IVA).
+ *
+ * Spec ref: docs/spec/especificacao-tecnica-v1.md § 3.19
+ *
+ * Idempotente e não destrutiva — corre em bases já com faturas emitidas, que é
+ * o caso normal (o migrate do núcleo só corre em bases vazias). Entra em
+ * `scripts/migrate-all.js`.
+ *
+ * Uso:
+ *   node src/infrastructure/migrate-fiscal.js
+ */
+'use strict';
+
+require('dotenv').config();
+const pool = require('./db');
+const { applyFiscalSchema } = require('./migrations/fiscal');
+
+async function migrate() {
+  const client = await pool.connect();
+  try {
+    console.info('[migrate:fiscal] A verificar séries e assinatura de documentos...');
+    await client.query('BEGIN');
+    await applyFiscalSchema(client);
+    await client.query('COMMIT');
+    console.info('[migrate:fiscal] ✅ Conformidade fiscal criada/verificada.');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('[migrate:fiscal] ❌ Erro na migração:', err.message);
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+if (require.main === module) {
+  migrate()
+    .then(() => pool.end())
+    .catch(() => { pool.end(); process.exit(1); });
+}
+
+module.exports = { migrate };

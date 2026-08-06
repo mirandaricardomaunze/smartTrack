@@ -1,0 +1,91 @@
+# =============================================================================
+# sistemaTrack — orquestração de produção (VPS + Docker + Caddy/HTTPS).
+# Requer um `.env` na raiz (ver `.env.example`).
+#   docker compose build && docker compose up -d
+# Primeiro arranque: o backend faz o bootstrap da BD automaticamente; depois
+# crie o SUPERADMIN:  docker compose exec backend node backend/api-gateway/scripts/seed-superadmin.js
+# =============================================================================
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${PGUSER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${PGDATABASE}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PGUSER} -d ${PGDATABASE}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [internal]
+
+  backend:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.backend
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      PGHOST: db
+    depends_on:
+      db:
+        condition: service_healthy
+    networks: [internal]
+
+  admin:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.frontend
+      args:
+        APP: admin-panel
+        PORT: "3010"
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
+    restart: unless-stopped
+    environment:
+      PORT: "3010"
+    depends_on: [backend]
+    networks: [internal]
+
+  client:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.frontend
+      args:
+        APP: client-app
+        PORT: "3011"
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
+    restart: unless-stopped
+    environment:
+      PORT: "3011"
+    depends_on: [backend]
+    networks: [internal]
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN_API: ${DOMAIN_API}
+      DOMAIN_ADMIN: ${DOMAIN_ADMIN}
+      DOMAIN_APP: ${DOMAIN_APP}
+      ACME_EMAIL: ${ACME_EMAIL}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on: [backend, admin, client]
+    networks: [internal]
+
+volumes:
+  db-data:
+  caddy-data:
+  caddy-config:
+
+networks:
+  internal:

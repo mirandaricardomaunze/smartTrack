@@ -1,0 +1,23 @@
+# =============================================================================
+# Backend (monólito modular) — api-gateway + serviços carregados no mesmo processo.
+# Contexto de build: RAIZ do repositório.  ->  docker build -f deploy/Dockerfile.backend .
+# =============================================================================
+FROM node:20-alpine
+
+WORKDIR /app
+ENV NODE_ENV=production
+
+# Só o backend é necessário (CommonJS, sem passo de build).
+COPY backend ./backend
+
+# Deps de runtime partilhadas por todos os serviços do monólito. A resolução
+# ascendente de node_modules cobre api-gateway e os *-service (mesmas deps).
+RUN cd backend \
+ && printf '{"name":"backend-runtime","private":true}\n' > package.json \
+ && npm install --omit=dev --no-audit --no-fund \
+      express@^4.19.2 cors@^2.8.5 dotenv@^17.4.2 pg@^8.22.0
+
+EXPOSE 4000
+
+# Bootstrap idempotente da BD (cria o núcleo só se a base for nova) + arranque.
+CMD ["sh", "-c", "node backend/api-gateway/scripts/bootstrap-migrate.js && node backend/api-gateway/src/server.js"]

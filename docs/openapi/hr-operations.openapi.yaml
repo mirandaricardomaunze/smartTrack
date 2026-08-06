@@ -1,0 +1,17 @@
+openapi: 3.0.3
+info: { title: sistemaTrack HR Operations API, version: 1.0.0 }
+servers: [{ url: /v1/hr/operations }]
+security: [{ bearerAuth: [] }]
+paths:
+  /summary:
+    get: { summary: Resumo operacional de RH, responses: { '200': { description: Totais e alertas } } }
+  /leave-balances:
+    get: { summary: Listar saldos anuais, responses: { '200': { description: Lista } } }
+    post: { summary: Criar ou atualizar saldo, requestBody: { required: true, content: { application/json: { schema: { type: object }, example: { employee_id: employee-id, year: 2026, entitled_days: 22, carried_days: 0, used_days: 5 } } } }, responses: { '201': { description: Saldo guardado } } }
+  /shifts: { get: { summary: Listar turnos, responses: { '200': { description: Lista } } }, post: { summary: Criar turno, responses: { '201': { description: Criado } } } }
+  /time-bank: { get: { summary: Listar banco de horas, responses: { '200': { description: Lista } } }, post: { summary: Lançar minutos, responses: { '201': { description: Criado } } } }
+  /documents: { get: { summary: Listar documentos, responses: { '200': { description: Lista } } }, post: { summary: Registar metadados, responses: { '201': { description: Criado } } } }
+  /checklists: { get: { summary: Listar checklists, responses: { '200': { description: Lista } } }, post: { summary: Criar checklist, responses: { '201': { description: Criado } } } }
+  /trainings: { get: { summary: Listar formações, responses: { '200': { description: Lista } } }, post: { summary: Criar formação, responses: { '201': { description: Criado } } } }
+  /benefits: { get: { summary: Listar benefícios e adiantamentos, responses: { '200': { description: Lista } } }, post: { summary: Criar benefício ou adiantamento, responses: { '201': { description: Criado } } } }
+components: { securitySchemes: { bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT } } }

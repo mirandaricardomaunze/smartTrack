@@ -1,0 +1,15 @@
+openapi: 3.0.3
+info: { title: SmartTrack Fleet API, version: 1.0.0 }
+servers: [{ url: /v1 }]
+security: [{ bearerAuth: [] }]
+paths:
+  /fleet/stats:
+    get: { summary: Indicadores da frota, responses: { '200': { description: Frota e combustível } } }
+  /fleet/vehicles:
+    get: { summary: Listar viaturas, responses: { '200': { description: Viaturas } } }
+    post: { summary: Criar viatura, responses: { '201': { description: Viatura criada } } }
+  /fleet/fuel:
+    get: { summary: Listar abastecimentos, responses: { '200': { description: Histórico } } }
+    post: { summary: Registar abastecimento, responses: { '201': { description: Abastecimento e consumo } } }
+components:
+  securitySchemes: { bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT } }

@@ -1,0 +1,46 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# App do Cliente (Next.js, standalone) — imagem de produção
+# Contexto de build: raiz do repositório.
+#   docker build -f infra/docker/Dockerfile.client \
+#     --build-arg NEXT_PUBLIC_API_URL=https://api.seu-dominio -t sistematrack-client .
+#
+# IMPORTANTE: NEXT_PUBLIC_* é embutido em BUILD TIME. A URL da API tem de ser a
+# URL PÚBLICA do backend (o browser do cliente é que chama), não o nome interno.
+# ─────────────────────────────────────────────────────────────────────────────
+FROM node:20-alpine AS build
+WORKDIR /app
+
+ARG NEXT_PUBLIC_API_URL
+ARG NEXT_PUBLIC_API_VERSION=v1
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+ENV NEXT_PUBLIC_API_VERSION=$NEXT_PUBLIC_API_VERSION
+ENV NEXT_TELEMETRY_DISABLED=1
+
+COPY package.json package-lock.json ./
+COPY backend ./backend
+COPY frontend ./frontend
+
+# Build precisa das devDeps (typescript, tailwind…), por isso instala tudo.
+RUN npm ci --ignore-scripts
+RUN npm run build --workspace=client-app
+
+# ── Imagem final: saída standalone (server.js + node_modules mínimos) ─────────
+FROM node:20-alpine AS runtime
+WORKDIR /app
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV PORT=3011
+ENV HOSTNAME=0.0.0.0
+
+# O tracing root é o monorepo → a estrutura é preservada em .next/standalone.
+COPY --from=build /app/frontend/client-app/.next/standalone ./
+COPY --from=build /app/frontend/client-app/.next/static ./frontend/client-app/.next/static
+COPY --from=build /app/frontend/client-app/public ./frontend/client-app/public
+
+USER node
+EXPOSE 3011
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD wget -qO- http://127.0.0.1:3011/ >/dev/null 2>&1 || exit 1
+
+CMD ["node", "frontend/client-app/server.js"]

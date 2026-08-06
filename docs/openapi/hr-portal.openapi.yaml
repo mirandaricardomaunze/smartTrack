@@ -1,0 +1,28 @@
+openapi: 3.0.3
+info: { title: sistemaTrack Employee Portal API, version: 1.0.0 }
+servers: [{ url: /v1/hr/portal }]
+security: [{ bearerAuth: [] }]
+paths:
+  /accounts:
+    post:
+      summary: Provisionar conta de colaborador
+      description: Exclusivo a ADMIN; liga uma conta EMPLOYEE ao colaborador da mesma empresa.
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/PortalAccount' }, example: { employee_id: employee-id, email: colaborador@example.mz, password: PortalSeguro2026! } } } }
+      responses: { '201': { description: Conta criada }, '409': { description: E-mail ou colaborador já vinculado } }
+  /me:
+    get:
+      summary: Consultar o portal do próprio colaborador
+      description: Exclusivo a EMPLOYEE; a identidade é derivada do JWT.
+      responses: { '200': { description: Perfil e dados pessoais de RH }, '403': { description: Conta sem vínculo ativo } }
+  /me/leaves:
+    post:
+      summary: Submeter pedido de férias ou licença
+      requestBody: { required: true, content: { application/json: { schema: { type: object }, example: { type: annual, start_date: '2026-09-01', end_date: '2026-09-05', reason: Descanso anual } } } }
+      responses: { '201': { description: Pedido pendente criado } }
+components:
+  securitySchemes: { bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT } }
+  schemas:
+    PortalAccount:
+      type: object
+      required: [employee_id, email, password]
+      properties: { employee_id: { type: string }, email: { type: string, format: email }, password: { type: string, minLength: 10 } }

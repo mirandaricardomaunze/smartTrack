@@ -16,12 +16,19 @@ export { EventoRastreioFactory } from './factories/evento-rastreio.factory';
 export { SidebarStatsFactory }   from './factories/sidebar-stats.factory';
 export { WarehouseFactory, WarehouseMovementFactory } from './factories/warehouse.factory';
 export { TrackedShipmentFactory, IntlTrackingEventFactory } from './factories/tracking.factory';
-export { PodFactory, DeliveryFailureFactory, TINY_PNG_DATA_URL } from './factories/pod.factory';
+export { PodFactory, DeliveryFailureFactory, PodImagesFactory, dataUrlOfSize, PHONE_PHOTO_BYTES, TINY_PNG_DATA_URL } from './factories/pod.factory';
+export { PodCaptureFactory } from './factories/pod-capture.factory';
+export type { TestImageFile, TestDecodedImage, EncodeAttempt } from './factories/pod-capture.factory';
+export { NavigationFactory, MAPUTO_COORDS } from './factories/navigation.factory';
+export type { TestNavigationStop } from './factories/navigation.factory';
 export { DriverSettlementFactory, CodCollectionFactory } from './factories/settlement.factory';
 export { OutboundMessageFactory } from './factories/messaging.factory';
+export { PushFactory } from './factories/push.factory';
+export type { TestFirebaseCredentials, TestPushRequest } from './factories/push.factory';
 export { SupportThreadFactory, SupportMessageFactory } from './factories/support.factory';
 export { ClientFactory } from './factories/client.factory';
 export { PricingZoneFactory, QuoteInputFactory } from './factories/pricing.factory';
+export { DriverVehicleFactory, ModalLoadFactory, MODAL_CAPACITY_KG, MODAL_SYNONYM_CASES, DeliveryModal } from './factories/delivery-modal.factory';
 export { InvoiceFactory } from './factories/invoice.factory';
 export { CompanyFactory } from './factories/company.factory';
 export { CompanyProfileFactory, TINY_LOGO_DATA_URL } from './factories/company-profile.factory';
@@ -30,6 +37,7 @@ export { PlanFactory, SubscriptionFactory } from './factories/subscription.facto
 export { InvoiceLineFactory, FiscalDocumentFactory, DocumentSeriesFactory, SignedChainFactory } from './factories/fiscal.factory';
 export { AuditEventFactory, AuditChainFactory } from './factories/audit.factory';
 export { PasswordResetFactory } from './factories/password-reset.factory';
+export { UserAccessFactory } from './factories/user-access.factory';
 export { PickupFactory } from './factories/pickup.factory';
 export { BackupFactory } from './factories/backup.factory';
 export { DeliveryOtpFactory, KNOWN_OTP_CODE, KNOWN_OTP_HASH } from './factories/otp.factory';
@@ -43,10 +51,17 @@ export { HrPortalAccountFactory, HrPortalDashboardFactory } from './factories/hr
 export { FinanceAccountFactory, FinanceEntryFactory, FinanceSummaryFactory } from './factories/finance.factory';
 export { FleetVehicleFactory, FuelEntryFactory, FuelConsumptionFactory } from './factories/fleet.factory';
 export { ProviderHealthFactory, DeliveryIncidentFactory, ReturnRequestFactory, CustomerPortalOrderFactory, RouteConstraintsFactory, DeliveryProfitabilityFactory, ApprovalRequestFactory } from './factories/professionalization.factory';
+export { MonitoringFactory } from './factories/monitoring.factory';
+
+// Percursos (conduzem vários módulos pela ordem da operação, não geram dados)
+export { DeliveryJourney } from './journeys/delivery-journey';
+export type { JourneyServices, JourneyOptions, JourneyStep } from './journeys/delivery-journey';
 
 // Sondas (ferramentas de verificação, não dados)
 export { readPdfLayout, findOverlaps, findOutsideMargins, describeOverlap } from './pdf-layout';
 export type { PdfTextRun, PdfLayout, MeasureFn } from './pdf-layout';
+export { scanExternalAssets, describeAssetRefs, TILE_HOSTS } from './external-assets';
+export type { ExternalAssetRef, ExternalAssetReport, GoogleFontImportRef } from './external-assets';
 
 // Mocks
 export { MockJwtPayloads, MockOwnerPayload } from './mocks/jwt-payloads.mock';
@@ -67,6 +82,7 @@ export type { TestOutboundMessage } from './factories/messaging.factory';
 export type { TestSupportThreadInput, TestSupportMessage } from './factories/support.factory';
 export type { TestClientInput } from './factories/client.factory';
 export type { TestPricingZoneInput, TestQuoteInput } from './factories/pricing.factory';
+export type { TestDriverVehicle, TestModalLoad } from './factories/delivery-modal.factory';
 export type { TestInvoiceInput, TestInvoiceItem } from './factories/invoice.factory';
 export type { TestCompanyInput } from './factories/company.factory';
 export type { TestCompanyProfileInput } from './factories/company-profile.factory';
@@ -75,6 +91,7 @@ export type { TestPlanInput, TestSubscriptionInput } from './factories/subscript
 export type { TestInvoiceLine, TestFiscalDocument, TestSignedDocument, TestDocumentSeries } from './factories/fiscal.factory';
 export type { TestAuditEvent, TestAuditInput } from './factories/audit.factory';
 export type { TestResetToken } from './factories/password-reset.factory';
+export type { TestPanelUserInput, TestDriverAccessInput, TestActor, TestAccountRole } from './factories/user-access.factory';
 export type { TestPickupInput } from './factories/pickup.factory';
 export type { TestBackupManifest } from './factories/backup.factory';
 export type { TestDeliveryOtp } from './factories/otp.factory';
@@ -82,3 +99,4 @@ export type { TestPaginationScenario } from './factories/pagination.factory';
 export type { TestRbacRequest } from './factories/rbac-request.factory';
 export type { TestRoute } from './factories/route.factory';
 export type { TestProviderHealth, TestDeliveryIncident, TestReturnRequest, TestCustomerPortalOrder, TestRouteConstraints, TestDeliveryProfitability, TestApprovalRequest, ProviderKind, ProviderMode, IncidentKind, IncidentStatus, ReturnStatus } from './factories/professionalization.factory';
+export type { TestMeasuredRequest, TestObservation, TestErrorEvent } from './factories/monitoring.factory';

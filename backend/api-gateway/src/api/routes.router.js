@@ -25,6 +25,8 @@ const {
   InvalidRouteTransitionError,
 } = require('../../../routes-service/src/application/routes.service');
 
+const { assertRouteFitsDriver, assignRouteOrders, DispatchError } = require('../application/dispatch.service');
+
 const router = Router();
 const requireAssignedRoute = requireResourceOwnerOrRoles(
   ['ADMIN', 'SUPPORT'],
@@ -38,6 +40,7 @@ function handleError(err, res) {
     MissingRequiredFieldError,
     EmptyRouteError,
     InvalidRouteTransitionError,
+    DispatchError,
   ];
   if (known.some((ErrorClass) => err instanceof ErrorClass)) {
     return res.status(err.statusCode ?? 400).json({ error: err.message });
@@ -67,8 +70,17 @@ router.post('/optimize', requireAuth, requireRoles(['ADMIN']), (req, res) => {
 });
 
 router.post('/', requireAuth, requireRoles(['ADMIN']), async (req, res) => {
-  try { res.status(201).json(await createRoute(req.body ?? {})); }
-  catch (err) { handleError(err, res); }
+  const body = req.body ?? {};
+  try {
+    // A capacidade verifica-se antes de otimizar: não vale a pena calcular a
+    // melhor ordem de paradas que a moto não consegue transportar (§ 3.33).
+    if (body.driver_id) await assertRouteFitsDriver(body.driver_id, body.stops ?? []);
+    const route = await createRoute(body);
+    // Despachar é atribuir: sem isto a rota existe e o motorista continua sem a
+    // encomenda nas mãos da aplicação dele. Ver a nota em dispatch.service.
+    const assignment = await assignRouteOrders(route);
+    res.status(201).json({ ...route, assignment });
+  } catch (err) { handleError(err, res); }
 });
 
 router.get('/:id', requireAuth, requireRoles(['ADMIN', 'SUPPORT', 'DRIVER']), requireAssignedRoute, async (req, res) => {
@@ -77,8 +89,23 @@ router.get('/:id', requireAuth, requireRoles(['ADMIN', 'SUPPORT', 'DRIVER']), re
 });
 
 router.post('/:id/reoptimize', requireAuth, requireRoles(['ADMIN']), async (req, res) => {
-  try { res.json(await reoptimizeRoute(req.params.id, req.body ?? {})); }
-  catch (err) { handleError(err, res); }
+  const body = req.body ?? {};
+  try {
+    // Reotimizar é o outro caminho por onde entra carga nova numa rota. O que
+    // conta é o que o motorista ainda tem de levar: as paradas já resolvidas
+    // saíram do veículo, as pendentes somam-se às novas.
+    if (Array.isArray(body.new_stops) && body.new_stops.length > 0) {
+      const route = await getRoute(req.params.id);
+      const pendentes = (route.stops ?? []).filter((stop) => stop.status === 'pending');
+      await assertRouteFitsDriver(route.driver_id, [...pendentes, ...body.new_stops]);
+    }
+    const reoptimized = await reoptimizeRoute(req.params.id, body);
+    // As paradas novas entram por aqui e precisam da mesma atribuição que as da
+    // criação — caso contrário um pedido acrescentado a meio do turno fica com o
+    // motorista sem lhe poder tocar.
+    const assignment = await assignRouteOrders(reoptimized);
+    res.json({ ...reoptimized, assignment });
+  } catch (err) { handleError(err, res); }
 });
 
 router.put('/:id/status', requireAuth, requireRoles(['ADMIN']), async (req, res) => {

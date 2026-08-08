@@ -99,6 +99,80 @@ function rowToDriver(row) {
   };
 }
 
+// ─── POD: imagens fora da linha do pedido (spec § 3.28) ──────────────────────
+// A assinatura e a foto chegam a 2,2 MB cada. Guardadas em `orders.pod`, iam a
+// reboque de cada `SELECT *` — e todas as listagens fazem `SELECT *`. Ficam numa
+// tabela à parte, carregadas só quando alguém abre o detalhe da entrega.
+
+const POD_IMAGE_KEYS = ['signature', 'photo'];
+
+/**
+ * Separa o POD em metadados (ficam no pedido) e imagens (vão para a tabela própria).
+ *
+ * Quando o POD chega sem imagens — o caso de qualquer atualização de estado sobre
+ * um pedido já entregue — os sinalizadores existentes são preservados e as imagens
+ * guardadas não são tocadas. Sem isso, uma mudança de estado apagava a prova.
+ *
+ * @param {object | null | undefined} pod
+ * @returns {{ meta: object | null, images: { signature?: string, photo?: string } | null }}
+ */
+function splitPod(pod) {
+  if (!pod || typeof pod !== 'object') return { meta: null, images: null };
+
+  const meta = { ...pod };
+  const images = {};
+  for (const key of POD_IMAGE_KEYS) {
+    const value = meta[key];
+    delete meta[key];
+    if (typeof value === 'string' && value) images[key] = value;
+  }
+
+  meta.has_signature = images.signature ? true : Boolean(pod.has_signature);
+  meta.has_photo     = images.photo     ? true : Boolean(pod.has_photo);
+
+  return { meta, images: Object.keys(images).length ? images : null };
+}
+
+/**
+ * Grava as imagens do POD. Só é chamada quando há imagens novas — uma atualização
+ * de metadados não reescreve megabytes.
+ * @param {import('pg').PoolClient | import('pg').Pool} executor
+ */
+async function upsertPodImages(executor, orderId, images) {
+  await executor.query(`
+    INSERT INTO order_pod_images (order_id, signature, photo, updated_at)
+    VALUES ($1, $2, $3, NOW())
+    ON CONFLICT (order_id) DO UPDATE SET
+      signature  = COALESCE(EXCLUDED.signature, order_pod_images.signature),
+      photo      = COALESCE(EXCLUDED.photo,     order_pod_images.photo),
+      updated_at = NOW()
+  `, [orderId, images.signature ?? null, images.photo ?? null]);
+}
+
+/**
+ * Corre `fn` dentro de uma transação. Se já vier um executor de transação, usa-o
+ * — quem abriu a transação é que a fecha.
+ * @template T
+ * @param {import('pg').PoolClient | import('pg').Pool} executor
+ * @param {(executor: any) => Promise<T>} fn
+ * @returns {Promise<T>}
+ */
+async function inTransaction(executor, fn) {
+  if (executor !== pool) return fn(executor);
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await fn(client);
+    await client.query('COMMIT');
+    return result;
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 // ─── OrderRepository ─────────────────────────────────────────────────────────
 
 const OrderRepository = {
@@ -201,6 +275,60 @@ const OrderRepository = {
   },
 
   /**
+   * Vários pedidos por id, numa consulta só.
+   *
+   * O despacho (§ 3.33) precisa do peso de todas as paradas antes de montar a
+   * rota; uma rota de trinta paradas não pode custar trinta idas à base.
+   * Ids desconhecidos são simplesmente omitidos do resultado.
+   *
+   * @param {string[]} ids
+   * @returns {Promise<Map<string, object>>}
+   */
+  async findManyByIds(ids) {
+    const unique = [...new Set((ids ?? []).filter(Boolean))];
+    if (unique.length === 0) return new Map();
+
+    const params = [unique];
+    const { rows } = await pool.query(
+      `SELECT * FROM orders WHERE id = ANY($1::text[])${companyClause(params)}`,
+      params,
+    );
+    return new Map(rows.map((row) => [row.id, rowToOrder(row)]));
+  },
+
+  /**
+   * Liga um conjunto de pedidos ao motorista e à rota que os vai levar.
+   *
+   * PORQUÊ UMA ESCRITA PRÓPRIA e não `update()`: `update()` reescreve a linha
+   * inteira a partir de um objeto em memória. Aqui mexem-se dois campos em
+   * várias linhas ao mesmo tempo, e ler-modificar-gravar cada pedido abria uma
+   * janela para desfazer o que a app do motorista tivesse acabado de gravar.
+   *
+   * Só atualiza pedidos que ainda não estão fechados: uma rota reotimizada não
+   * pode reatribuir uma encomenda já entregue ou cancelada.
+   *
+   * @param {string[]} orderIds
+   * @param {{ driver_id: string, route_id: string }} assignment
+   * @returns {Promise<string[]>} Ids efetivamente atualizados.
+   */
+  async assignToRoute(orderIds, assignment) {
+    const unique = [...new Set((orderIds ?? []).filter(Boolean))];
+    if (unique.length === 0) return [];
+
+    const params = [assignment.driver_id, assignment.route_id, unique];
+    const { rows } = await pool.query(`
+      UPDATE orders
+         SET driver_id  = $1,
+             route_id   = $2,
+             updated_at = NOW()
+       WHERE id = ANY($3::text[])
+         AND current_status NOT IN ('delivered', 'cancelled')${companyClause(params)}
+      RETURNING id
+    `, params);
+    return rows.map((row) => row.id);
+  },
+
+  /**
    * Pedidos ligados a um cliente (histórico), mais recentes primeiro.
    * @param {string} clientRefId
    * @returns {Promise<object[]>}
@@ -259,43 +387,36 @@ const OrderRepository = {
    * @returns {Promise<object>}
    */
   async create(order) {
-    const { rows } = await pool.query(`
-      INSERT INTO orders (
-        id, client_id, client_phone, client_email, tracking_code, current_status,
-        origin, destination, carrier_intl_id, driver_id, route_id, warehouse_id,
-        pod, delivery_otp, cod_amount, cod_status, cod, cod_settlement_id,
-        value, history, created_at, updated_at, client_ref_id, weight_grams, pricing, company_id
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)
-      RETURNING *
-    `, [
-      order.id,
-      order.client_id,
-      order.client_phone ?? null,
-      order.client_email ?? null,
-      order.tracking_code,
-      order.current_status,
-      JSON.stringify(order.origin),
-      JSON.stringify(order.destination),
-      order.carrier_intl_id ?? null,
-      order.driver_id ?? null,
-      order.route_id ?? null,
-      order.warehouse_id ?? null,
-      order.pod ? JSON.stringify(order.pod) : null,
-      order.delivery_otp ? JSON.stringify(order.delivery_otp) : null,
-      order.cod_amount ?? 0,
-      order.cod_status ?? 'none',
-      order.cod ? JSON.stringify(order.cod) : null,
-      order.cod_settlement_id ?? null,
-      order.value,
-      JSON.stringify(order.history ?? []),
-      order.created_at,
-      order.updated_at,
-      order.client_ref_id ?? null,
-      order.weight_grams ?? null,
-      order.pricing ? JSON.stringify(order.pricing) : null,
-      order.company_id ?? writeCompanyId(),
-    ]);
-    return rowToOrder(rows[0]);
+    const { meta: podMeta, images: podImages } = splitPod(order.pod);
+    if (podImages) {
+      return inTransaction(pool, async (tx) => {
+        const created = await insertOrder(tx, order, podMeta);
+        await upsertPodImages(tx, order.id, podImages);
+        return created;
+      });
+    }
+    return insertOrder(pool, order, podMeta);
+  },
+
+  /**
+   * Imagens do comprovativo, carregadas à parte (spec § 3.28).
+   *
+   * NÃO faz controlo de acesso — quem chama tem de ter confirmado antes, por
+   * `findById` ou `findByCode`, que o pedido é visível a quem pergunta.
+   *
+   * @param {string} orderId
+   * @returns {Promise<{ signature?: string, photo?: string }>}
+   */
+  async findPodImages(orderId, executor = pool) {
+    const { rows } = await executor.query(
+      'SELECT signature, photo FROM order_pod_images WHERE order_id = $1 LIMIT 1',
+      [orderId],
+    );
+    if (!rows.length) return {};
+    return {
+      signature: rows[0].signature ?? undefined,
+      photo:     rows[0].photo ?? undefined,
+    };
   },
 
   /**
@@ -304,41 +425,101 @@ const OrderRepository = {
    * @returns {Promise<void>}
    */
   async update(order, executor = pool) {
-    const params = [
-      order.current_status,
-      order.driver_id ?? null,
-      order.route_id ?? null,
-      order.warehouse_id ?? null,
-      order.pod ? JSON.stringify(order.pod) : null,
-      order.delivery_otp ? JSON.stringify(order.delivery_otp) : null,
-      order.cod_amount ?? 0,
-      order.cod_status ?? 'none',
-      order.cod ? JSON.stringify(order.cod) : null,
-      order.cod_settlement_id ?? null,
-      JSON.stringify(order.destination ?? {}),
-      JSON.stringify(order.history ?? []),
-      order.updated_at,
-      order.id,
-    ];
-    await executor.query(`
-      UPDATE orders SET
-        current_status    = $1,
-        driver_id         = $2,
-        route_id          = $3,
-        warehouse_id      = $4,
-        pod               = $5,
-        delivery_otp      = $6,
-        cod_amount        = $7,
-        cod_status        = $8,
-        cod               = $9,
-        cod_settlement_id = $10,
-        destination       = $11,
-        history           = $12,
-        updated_at        = $13
-      WHERE id = $14${companyClause(params)}
-    `, params);
+    const { meta: podMeta, images: podImages } = splitPod(order.pod);
+    if (podImages) {
+      return inTransaction(executor, async (tx) => {
+        await updateOrderRow(tx, order, podMeta);
+        await upsertPodImages(tx, order.id, podImages);
+      });
+    }
+    return updateOrderRow(executor, order, podMeta);
   },
 };
+
+/**
+ * INSERT cru do pedido. Separado de `create` para o caminho com imagens poder
+ * reutilizá-lo dentro da transação.
+ * @param {import('pg').PoolClient | import('pg').Pool} executor
+ */
+async function insertOrder(executor, order, podMeta) {
+  const { rows } = await executor.query(`
+      INSERT INTO orders (
+        id, client_id, client_phone, client_email, tracking_code, current_status,
+        origin, destination, carrier_intl_id, driver_id, route_id, warehouse_id,
+        pod, delivery_otp, cod_amount, cod_status, cod, cod_settlement_id,
+        value, history, created_at, updated_at, client_ref_id, weight_grams, pricing, company_id
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)
+      RETURNING *
+    `, [
+    order.id,
+    order.client_id,
+    order.client_phone ?? null,
+    order.client_email ?? null,
+    order.tracking_code,
+    order.current_status,
+    JSON.stringify(order.origin),
+    JSON.stringify(order.destination),
+    order.carrier_intl_id ?? null,
+    order.driver_id ?? null,
+    order.route_id ?? null,
+    order.warehouse_id ?? null,
+    podMeta ? JSON.stringify(podMeta) : null,
+    order.delivery_otp ? JSON.stringify(order.delivery_otp) : null,
+    order.cod_amount ?? 0,
+    order.cod_status ?? 'none',
+    order.cod ? JSON.stringify(order.cod) : null,
+    order.cod_settlement_id ?? null,
+    order.value,
+    JSON.stringify(order.history ?? []),
+    order.created_at,
+    order.updated_at,
+    order.client_ref_id ?? null,
+    order.weight_grams ?? null,
+    order.pricing ? JSON.stringify(order.pricing) : null,
+    order.company_id ?? writeCompanyId(),
+  ]);
+  return rowToOrder(rows[0]);
+}
+
+/**
+ * UPDATE cru do pedido, já com o POD sem imagens.
+ * @param {import('pg').PoolClient | import('pg').Pool} executor
+ */
+async function updateOrderRow(executor, order, podMeta) {
+  const params = [
+    order.current_status,
+    order.driver_id ?? null,
+    order.route_id ?? null,
+    order.warehouse_id ?? null,
+    podMeta ? JSON.stringify(podMeta) : null,
+    order.delivery_otp ? JSON.stringify(order.delivery_otp) : null,
+    order.cod_amount ?? 0,
+    order.cod_status ?? 'none',
+    order.cod ? JSON.stringify(order.cod) : null,
+    order.cod_settlement_id ?? null,
+    JSON.stringify(order.destination ?? {}),
+    JSON.stringify(order.history ?? []),
+    order.updated_at,
+    order.id,
+  ];
+  await executor.query(`
+    UPDATE orders SET
+      current_status    = $1,
+      driver_id         = $2,
+      route_id          = $3,
+      warehouse_id      = $4,
+      pod               = $5,
+      delivery_otp      = $6,
+      cod_amount        = $7,
+      cod_status        = $8,
+      cod               = $9,
+      cod_settlement_id = $10,
+      destination       = $11,
+      history           = $12,
+      updated_at        = $13
+    WHERE id = $14${companyClause(params)}
+  `, params);
+}
 
 // ─── UserRepository ──────────────────────────────────────────────────────────
 
@@ -354,10 +535,17 @@ function rowToUser(row) {
     email:      row.email,
     role:       row.role,
     company_id: row.company_id ?? undefined,
-    created_at: row.created_at instanceof Date
-      ? row.created_at.toISOString()
-      : row.created_at,
+    // Bases anteriores à § 3.32 podem devolver a coluna vazia numa leitura que
+    // não passou pelo `ensureTable` — uma conta sem estado é uma conta ativa.
+    status:     row.status ?? 'active',
+    blocked_at: toIso(row.blocked_at),
+    created_at: toIso(row.created_at),
   };
+}
+
+/** Data → ISO, tolerante a string e a nulo. */
+function toIso(value) {
+  return value instanceof Date ? value.toISOString() : (value ?? undefined);
 }
 
 const UserRepository = {
@@ -381,6 +569,12 @@ const UserRepository = {
     // utilizador vem daqui. SUPERADMIN tem company_id NULL (acesso à plataforma).
     await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS company_id TEXT;`);
     await pool.query(`ALTER TABLE users ALTER COLUMN company_id DROP NOT NULL;`);
+    // Estado de acesso (spec § 3.32). Repetido aqui, e não só na migração, para
+    // que uma base antiga ganhe a coluna no arranque — o login lê-a em todas as
+    // autenticações e uma coluna em falta seria um erro 500 na porta de entrada.
+    await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active';`);
+    await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS blocked_at TIMESTAMPTZ;`);
+    await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();`);
   },
 
   /**
@@ -408,6 +602,87 @@ const UserRepository = {
       RETURNING *
     `, [user.id, user.name, user.email, user.password_hash, user.role, user.company_id ?? null]);
     return rowToUser(rows[0]);
+  },
+
+  // ── Contas e acessos (spec § 3.32) ─────────────────────────────────────────
+  // Todas as leituras e escritas abaixo passam pelo filtro da empresa em
+  // contexto: um ADMIN da empresa A não vê nem mexe nas contas da empresa B.
+  // Sem empresa em contexto (SUPERADMIN, testes) não há filtro, como no resto.
+
+  /**
+   * Contas da empresa em contexto. Nunca devolve o hash da senha.
+   * @returns {Promise<object[]>}
+   */
+  async list() {
+    const params = [];
+    const { rows } = await pool.query(`
+      SELECT * FROM users${companyWhere(params)}
+      ORDER BY role, name
+    `, params);
+    return rows.map(rowToUser);
+  },
+
+  /**
+   * @param {string} id
+   * @returns {Promise<object | undefined>}
+   */
+  async findById(id) {
+    const params = [id];
+    const { rows } = await pool.query(
+      `SELECT * FROM users WHERE id = $1${companyClause(params)} LIMIT 1`,
+      params,
+    );
+    return rows.length ? rowToUser(rows[0]) : undefined;
+  },
+
+  /**
+   * Quais destes ids já têm conta. Serve a listagem de motoristas, para o painel
+   * saber a quem falta criar acesso sem uma consulta por linha.
+   * @param {string[]} ids
+   * @returns {Promise<Set<string>>}
+   */
+  async existingIds(ids) {
+    const unique = [...new Set((ids ?? []).filter(Boolean))];
+    if (unique.length === 0) return new Set();
+    const params = [unique];
+    const { rows } = await pool.query(
+      `SELECT id FROM users WHERE id = ANY($1)${companyClause(params)}`,
+      params,
+    );
+    return new Set(rows.map((row) => row.id));
+  },
+
+  /**
+   * Substitui a senha. Devolve a conta afetada, ou undefined se não existe (ou
+   * é de outra empresa).
+   * @param {string} id
+   * @param {string} passwordHash
+   * @returns {Promise<object | undefined>}
+   */
+  async updatePassword(id, passwordHash) {
+    const params = [passwordHash, id];
+    const { rows } = await pool.query(`
+      UPDATE users SET password_hash = $1, updated_at = NOW()
+      WHERE id = $2${companyClause(params)}
+      RETURNING *
+    `, params);
+    return rows.length ? rowToUser(rows[0]) : undefined;
+  },
+
+  /**
+   * Suspende ou reativa uma conta.
+   * @param {string} id
+   * @param {'active'|'blocked'} status
+   * @returns {Promise<object | undefined>}
+   */
+  async updateStatus(id, status) {
+    const params = [status, status === 'blocked' ? new Date() : null, id];
+    const { rows } = await pool.query(`
+      UPDATE users SET status = $1, blocked_at = $2, updated_at = NOW()
+      WHERE id = $3${companyClause(params)}
+      RETURNING *
+    `, params);
+    return rows.length ? rowToUser(rows[0]) : undefined;
   },
 };
 
@@ -515,6 +790,35 @@ const DriverRepository = {
       on_route:  Number(rows[0].on_route),
       available: Number(rows[0].available),
     };
+  },
+
+  /**
+   * Insere um motorista na empresa em contexto.
+   *
+   * PORQUE FALTAVA: o painel tinha um botão "Adicionar Motorista" que só
+   * escrevia no estado do React — o motorista desaparecia ao recarregar a
+   * página, e não havia endpoint nenhum para o criar (spec § 3.32).
+   *
+   * @param {object} driver
+   * @returns {Promise<object>}
+   */
+  async create(driver) {
+    const { rows } = await pool.query(`
+      INSERT INTO drivers (id, name, email, phone, vehicle, current_status, performance_metrics, gps, created_at, company_id)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW(),$9)
+      RETURNING *
+    `, [
+      driver.id,
+      driver.name,
+      driver.email ?? null,
+      driver.phone ?? null,
+      JSON.stringify(driver.vehicle ?? {}),
+      driver.current_status ?? 'offline',
+      JSON.stringify(driver.performance_metrics ?? {}),
+      null,
+      writeCompanyId(),
+    ]);
+    return rowToDriver(rows[0]);
   },
 
   /**
@@ -2686,6 +2990,11 @@ const FinanceRepository={
  async voidEntry(id,userId){const p=[userId,id];const{rows}=await pool.query(`UPDATE finance_entries SET status='void',voided_by=$1,voided_at=NOW(),updated_at=NOW() WHERE id=$2 AND status='open'${companyClause(p)} RETURNING *`,p);return rows[0];},
  async summary(){const p=[];const{rows}=await pool.query(`SELECT COALESCE(SUM(amount_cents) FILTER(WHERE type='receivable' AND status='paid'),0) AS income,COALESCE(SUM(amount_cents) FILTER(WHERE type='payable' AND status='paid'),0) AS expense,COALESCE(SUM(amount_cents) FILTER(WHERE type='receivable' AND status='open'),0) AS receivable,COALESCE(SUM(amount_cents) FILTER(WHERE type='payable' AND status='open'),0) AS payable,COALESCE(SUM(amount_cents) FILTER(WHERE status='open' AND due_date<CURRENT_DATE),0) AS overdue FROM finance_entries${companyWhere(p)}`,p);const r=rows[0];return{cash_balance_cents:Number(r.income)-Number(r.expense),income_paid_cents:Number(r.income),expense_paid_cents:Number(r.expense),receivable_open_cents:Number(r.receivable),payable_open_cents:Number(r.payable),overdue_cents:Number(r.overdue)};}
 };
+/** Modais de duas/três rodas (§ 3.33) — usado para agregar a frota de última milha. */
+const MODAL_TWO_THREE_WHEELS = new Set(
+  require('../domain/delivery-modals').listModals().filter((m) => m.wheels <= 3).map((m) => m.code),
+);
+
 const FleetRepository={
  async listVehicles(){const p=[];const{rows}=await pool.query(`SELECT *,CASE WHEN insurance_expiry<CURRENT_DATE OR inspection_expiry<CURRENT_DATE THEN TRUE ELSE FALSE END AS document_expired,CASE WHEN insurance_expiry BETWEEN CURRENT_DATE AND CURRENT_DATE+30 OR inspection_expiry BETWEEN CURRENT_DATE AND CURRENT_DATE+30 THEN TRUE ELSE FALSE END AS document_expiring FROM fleet_vehicles${companyWhere(p)} ORDER BY plate`,p);return rows;},
  async findVehicle(id){const p=[id];const{rows}=await pool.query(`SELECT * FROM fleet_vehicles WHERE id=$1${companyClause(p)} LIMIT 1`,p);return rows[0];},
@@ -2693,7 +3002,13 @@ const FleetRepository={
  async latestFullFuel(vehicleId){const p=[vehicleId];const{rows}=await pool.query(`SELECT * FROM fleet_fuel_entries WHERE vehicle_id=$1 AND full_tank=TRUE${companyClause(p)} ORDER BY odometer_km DESC LIMIT 1`,p);return rows[0];},
  async createFuel(f){const c=await pool.connect();try{await c.query('BEGIN');const{rows}=await c.query(`INSERT INTO fleet_fuel_entries(id,company_id,vehicle_id,fuel_date,odometer_km,volume_ml,cost_cents,full_tank,station,driver_id,consumption_l_per_100km,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,[f.id,writeCompanyId(),f.vehicle_id,f.fuel_date,f.odometer_km,f.volume_ml,f.cost_cents,f.full_tank,f.station??null,f.driver_id??null,f.consumption_l_per_100km??null,f.created_by??null]);await c.query(`UPDATE fleet_vehicles SET odometer_km=$1,updated_at=NOW() WHERE id=$2 AND company_id=$3`,[f.odometer_km,f.vehicle_id,writeCompanyId()]);await c.query('COMMIT');return rows[0];}catch(e){await c.query('ROLLBACK');throw e;}finally{c.release();}},
  async listFuel(vehicleId){const p=[];let w=companyWhere(p,'f');if(vehicleId){p.push(vehicleId);w+=`${w?' AND':' WHERE'} f.vehicle_id=$${p.length}`;}const{rows}=await pool.query(`SELECT f.*,v.plate,v.make,v.model FROM fleet_fuel_entries f JOIN fleet_vehicles v ON v.id=f.vehicle_id AND v.company_id=f.company_id${w} ORDER BY f.fuel_date DESC,f.created_at DESC`,p);return rows.map(r=>({...r,consumption_l_per_100km:r.consumption_l_per_100km==null?null:Number(r.consumption_l_per_100km)}));},
- async stats(){const p=[];const v=(await pool.query(`SELECT COUNT(*)::int total,COUNT(*) FILTER(WHERE status!='inactive')::int active,COUNT(*) FILTER(WHERE status='maintenance')::int maintenance FROM fleet_vehicles${companyWhere(p)}`,p)).rows[0];const q=[];const f=(await pool.query(`SELECT COALESCE(SUM(cost_cents),0) cost,COALESCE(SUM(volume_ml),0) volume,COALESCE(AVG(consumption_l_per_100km) FILTER(WHERE consumption_l_per_100km IS NOT NULL),0) consumption FROM fleet_fuel_entries${companyWhere(q)}`,q)).rows[0];return{total:Number(v.total),active:Number(v.active),maintenance:Number(v.maintenance),fuel_cost_cents:Number(f.cost),fuel_volume_ml:Number(f.volume),average_consumption:Number(f.consumption)};}
+ async stats(){const p=[];const v=(await pool.query(`SELECT COUNT(*)::int total,COUNT(*) FILTER(WHERE status!='inactive')::int active,COUNT(*) FILTER(WHERE status='maintenance')::int maintenance FROM fleet_vehicles${companyWhere(p)}`,p)).rows[0];const q=[];const f=(await pool.query(`SELECT COALESCE(SUM(cost_cents),0) cost,COALESCE(SUM(volume_ml),0) volume,COALESCE(AVG(consumption_l_per_100km) FILTER(WHERE consumption_l_per_100km IS NOT NULL),0) consumption FROM fleet_fuel_entries${companyWhere(q)}`,q)).rows[0];
+  // Contagem por modal (§ 3.33) agregada em SQL, não em JavaScript sobre a
+  // lista toda: a frota de duas/três rodas é a que mais cresce e é a métrica
+  // que a operação abre todos os dias.
+  const m=[];const byModal=(await pool.query(`SELECT COALESCE(vehicle_type,'INDEFINIDO') modal,COUNT(*)::int total FROM fleet_vehicles${companyWhere(m)} GROUP BY 1 ORDER BY 2 DESC`,m)).rows;
+  const two=byModal.filter(r=>MODAL_TWO_THREE_WHEELS.has(r.modal)).reduce((s,r)=>s+Number(r.total),0);
+  return{total:Number(v.total),active:Number(v.active),maintenance:Number(v.maintenance),fuel_cost_cents:Number(f.cost),fuel_volume_ml:Number(f.volume),average_consumption:Number(f.consumption),by_modal:byModal.map(r=>({modal:r.modal,total:Number(r.total)})),two_three_wheelers:two};}
 };
 const HrOperationsRepository = {
   async list(table) { const params=[]; const {rows}=await pool.query(`SELECT * FROM ${table}${companyWhere(params)} ORDER BY created_at DESC`,params); return rows; },

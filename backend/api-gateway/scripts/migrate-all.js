@@ -20,7 +20,12 @@ const moduleMigrations = [
   ['perfil da empresa', 'api-gateway/src/infrastructure/migrate-branding.js'],
   ['registo de auditoria', 'api-gateway/src/infrastructure/migrate-audit.js'],
   ['recuperação de senha', 'api-gateway/src/infrastructure/migrate-password-reset.js'],
+  ['estado de acesso das contas', 'api-gateway/src/infrastructure/migrate-user-access.js'],
   ['índices da listagem de pedidos', 'api-gateway/src/infrastructure/migrate-orders-index.js'],
+  ['registo central de erros', 'api-gateway/src/infrastructure/migrate-monitoring.js'],
+  // Tem de correr depois de a tabela `orders` existir: lê o POD de lá e move as
+  // imagens para `order_pod_images`.
+  ['imagens do comprovativo de entrega', 'api-gateway/src/infrastructure/migrate-pod-images.js'],
   // Recursos Humanos, finanças e frota. A ordem importa: `hr` cria as tabelas
   // base e `hr-portal` altera `hr_employees`. Sem estas entradas, um deploy novo
   // ficava sem 14 tabelas e as respetivas páginas respondiam 500.

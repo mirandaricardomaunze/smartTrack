@@ -48,12 +48,16 @@ const PENDING_STATUSES = [
   'at_warehouse', 'awaiting_destination', 'out_for_delivery',
 ];
 
-/** Abreviatura do veículo (sem emoji): M=Moto, C=Carro, V=Van, CM=Caminhão. */
+/**
+ * Abreviatura do veículo (sem emoji): M=Motociclo, MT=Mototriciclo, C=Carro,
+ * V=Van, CM=Camião. Espelha o catálogo de modais (§ 3.33).
+ */
 const VEHICLE_TAG: Record<string, string> = {
-  MOTO:     'M',
-  CARRO:    'C',
-  VAN:      'V',
-  CAMINHAO: 'CM',
+  MOTO:         'M',
+  MOTOTRICICLO: 'MT',
+  CARRO:        'C',
+  VAN:          'V',
+  CAMINHAO:     'CM',
 };
 
 const FLEET_LABELS: Record<BackendDriver['current_status'], { label: string; badgeClass: string }> = {

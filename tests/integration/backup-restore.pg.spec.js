@@ -35,6 +35,9 @@ const toolsUp = spawnSync('pg_dump', ['--version']).status === 0
 const disponivel = pgUp && toolsUp;
 
 const policy    = disponivel ? require(`${ROOT}/backend/api-gateway/src/infrastructure/backup.policy`) : null;
+// A mesma regra que o ensaio usa para separar "o restauro partiu" de "já vinha
+// partido" — reutilizada, para o teste não ter uma segunda definição da regra.
+const { compareChains } = disponivel ? require(`${ROOT}/backend/api-gateway/scripts/backup-verify`) : {};
 const invoices  = disponivel ? require(`${ROOT}/backend/api-gateway/src/application/invoices.service`) : null;
 const companies = disponivel ? require(`${ROOT}/backend/api-gateway/src/application/companies.service`) : null;
 const audit     = disponivel ? require(`${ROOT}/backend/api-gateway/src/application/audit.service`) : null;
@@ -134,27 +137,49 @@ describe.skipIf(!disponivel)('api-gateway · cópia e restauro · PostgreSQL', (
   }, 120_000);
 
   it('should keep the chains valid in the restored database', () => {
-    // Corre a verificação do próprio sistema contra a base restaurada.
-    const check = spawnSync(process.execPath, ['-e', `
-      process.env.PGDATABASE = ${JSON.stringify(RESTORE_DB)};
-      const invoices = require(${JSON.stringify(path.join(ROOT, 'backend/api-gateway/src/application/invoices.service'))});
-      const audit = require(${JSON.stringify(path.join(ROOT, 'backend/api-gateway/src/application/audit.service'))});
-      const pool = require(${JSON.stringify(path.join(ROOT, 'backend/api-gateway/src/infrastructure/db'))});
-      (async () => {
-        const fiscal = await invoices.verifyIntegrity();
-        const trail = await audit.verifyIntegrity();
-        console.log(JSON.stringify({ fiscal: fiscal.ok, chains: fiscal.chains.length, audit: trail.ok }));
-        await pool.end();
-      })().catch((e) => { console.error(e.message); process.exit(1); });
-    `], { env: pgEnv(RESTORE_DB), encoding: 'utf8' });
+    /**
+     * Corre a verificação do próprio sistema contra uma base.
+     *
+     * Devolve o estado CADEIA A CADEIA, e não um booleano global: uma cadeia
+     * partida na origem é copiada fielmente para o restauro, e exigir o global
+     * fazia este teste depender da limpeza de todo o histórico da base de
+     * desenvolvimento em vez de testar o que lhe compete — se o restauro
+     * preserva o que recebeu.
+     */
+    const probe = (database) => {
+      const check = spawnSync(process.execPath, ['-e', `
+        process.env.PGDATABASE = ${JSON.stringify(database)};
+        const invoices = require(${JSON.stringify(path.join(ROOT, 'backend/api-gateway/src/application/invoices.service'))});
+        const audit = require(${JSON.stringify(path.join(ROOT, 'backend/api-gateway/src/application/audit.service'))});
+        const pool = require(${JSON.stringify(path.join(ROOT, 'backend/api-gateway/src/infrastructure/db'))});
+        (async () => {
+          const fiscal = await invoices.verifyIntegrity();
+          const trail = await audit.verifyIntegrity();
+          console.log(JSON.stringify({
+            fiscal: fiscal.chains.map((c) => ({ id: c.doc_type + '/' + c.series, ok: c.ok })),
+            audit:  trail.chains.map((c) => ({ id: c.company_id, ok: c.ok })),
+          }));
+          await pool.end();
+        })().catch((e) => { console.error(e.message); process.exit(1); });
+      `], { env: pgEnv(database), encoding: 'utf8' });
 
-    const line = String(check.stdout).split('\n').filter((l) => l.trim().startsWith('{')).pop();
-    expect(line, String(check.stderr)).toBeTruthy();
+      const line = String(check.stdout).split('\n').filter((l) => l.trim().startsWith('{')).pop();
+      expect(line, String(check.stderr)).toBeTruthy();
+      return JSON.parse(line);
+    };
 
-    const result = JSON.parse(line);
-    expect(result.fiscal).toBe(true);
-    expect(result.chains).toBeGreaterThan(0);   // havia mesmo cadeia para validar
-    expect(result.audit).toBe(true);
+    const restored = probe(RESTORE_DB);
+    const source   = probe('track');
+
+    // A cadeia que este teste semeou tem de atravessar o restauro intacta.
+    expect(restored.fiscal.length).toBeGreaterThan(0);   // havia mesmo cadeia para validar
+    expect(restored.fiscal.every((c) => c.ok)).toBe(true);
+    expect(restored.audit.find((c) => c.id === COMPANY)?.ok).toBe(true);
+
+    // E nenhuma cadeia pode chegar partida ao restauro tendo estado íntegra na
+    // origem — é essa regressão que reprova uma cópia.
+    const { regressions } = compareChains(source.audit, restored.audit);
+    expect(regressions, `cadeias partidas pelo restauro: ${regressions.join(', ')}`).toEqual([]);
   }, 120_000);
 
   it('should detect a corrupted dump instead of restoring garbage', () => {

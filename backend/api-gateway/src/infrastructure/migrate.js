@@ -37,6 +37,10 @@ async function migrate() {
     await client.query('DROP TABLE IF EXISTS warehouse_movements CASCADE;');
     await client.query('DROP TABLE IF EXISTS warehouses CASCADE;');
     await client.query('DROP TABLE IF EXISTS driver_settlements CASCADE;');
+    // Vai junto com `orders`: as imagens do comprovativo referem-se a pedidos por
+    // id e não têm FK (a tabela de pedidos é recriada aqui). Deixá-las de pé era
+    // guardar provas de entregas que já não existem. Recriada por migrate-pod-images.
+    await client.query('DROP TABLE IF EXISTS order_pod_images CASCADE;');
     await client.query('DROP TABLE IF EXISTS orders CASCADE;');
     await client.query('DROP TABLE IF EXISTS drivers CASCADE;');
 

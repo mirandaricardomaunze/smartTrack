@@ -10,7 +10,7 @@
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { adminApi, type PricingZone, type CreateZoneData, type QuoteBreakdown, type ServiceLevel } from '@/services/api';
+import { adminApi, type PricingZone, type CreateZoneData, type DeliveryModalCode, type DeliveryModalSpec, type QuoteBreakdown, type ServiceLevel } from '@/services/api';
 import { Button, Card, Input, Select, PageHeader, DataTable } from '@/components/ui';
 
 function mzn(cents: number): string {
@@ -40,6 +40,9 @@ export default function TarifasPage() {
   const [simZone, setSimZone] = useState('');
   const [simWeight, setSimWeight] = useState('2.5');
   const [simService, setSimService] = useState<ServiceLevel>('normal');
+  /** Vazio = sem modal: o preço fica o de base, como antes do § 3.33. */
+  const [simModal, setSimModal] = useState<'' | DeliveryModalCode>('');
+  const [modais, setModais] = useState<DeliveryModalSpec[]>([]);
   const [quote, setQuote] = useState<QuoteBreakdown | null>(null);
   const [quoteErr, setQuoteErr] = useState('');
 
@@ -106,14 +109,20 @@ export default function TarifasPage() {
         zone_code: simZone,
         weight_grams: Math.round((parseFloat(simWeight) || 0) * 1000),
         service: simService,
+        vehicle_modal: simModal || undefined,
       }));
     } catch (err) {
       setQuote(null);
       setQuoteErr(err instanceof Error ? err.message : 'Falha ao calcular.');
     }
-  }, [simZone, simWeight, simService]);
+  }, [simZone, simWeight, simService, simModal]);
 
   useEffect(() => { void runQuote(); }, [runQuote]);
+
+  useEffect(() => { adminApi.getDeliveryModals().then(setModais).catch(() => setModais([])); }, []);
+
+  /** Rótulo de um modal para as mensagens do simulador. */
+  const modalLabel = (code: string | null) => modais.find((m) => m.code === code)?.label ?? code ?? '';
 
   return (
     <div className="flex flex-col gap-6">
@@ -170,6 +179,11 @@ export default function TarifasPage() {
           <Input label="Peso (kg)" type="number" min="0" step="0.1" value={simWeight} onChange={(e) => setSimWeight(e.target.value)} className="text-xs" />
           <Select label="Serviço" value={simService} onChange={(e) => setSimService(e.target.value as ServiceLevel)}
             options={[{ value: 'normal', label: 'Normal' }, { value: 'express', label: 'Expresso' }]} className="text-xs" />
+          <Select label="Modal" value={simModal} onChange={(e) => setSimModal(e.target.value as '' | DeliveryModalCode)}
+            options={[
+              { value: '', label: 'Sem modal (preço de base)' },
+              ...modais.map((m) => ({ value: m.code, label: `${m.label} — até ${m.capacity_kg} kg` })),
+            ]} className="text-xs" />
 
           {quoteErr && <p className="text-xs text-red-400">{quoteErr}</p>}
           {quote && (
@@ -177,9 +191,28 @@ export default function TarifasPage() {
               <div className="flex justify-between"><span className="text-slate-400">Base</span><span className="font-mono">{mzn(quote.base_cents)}</span></div>
               <div className="flex justify-between"><span className="text-slate-400">Peso</span><span className="font-mono">{mzn(quote.weight_cents)}</span></div>
               {quote.service_cents > 0 && <div className="flex justify-between"><span className="text-slate-400">Serviço</span><span className="font-mono">{mzn(quote.service_cents)}</span></div>}
+              {quote.modal_cents !== 0 && (
+                <div className="flex justify-between">
+                  <span className="text-slate-400">{modalLabel(quote.vehicle_modal)}</span>
+                  <span className="font-mono">{mzn(quote.modal_cents)}</span>
+                </div>
+              )}
               {quote.cod_surcharge_cents > 0 && <div className="flex justify-between"><span className="text-slate-400">Sobretaxa COD</span><span className="font-mono">{mzn(quote.cod_surcharge_cents)}</span></div>}
               <div className="flex justify-between border-t border-white/10 pt-1.5 mt-1 font-bold text-slate-100"><span>Total</span><span className="font-mono">{mzn(quote.total_cents)}</span></div>
             </div>
+          )}
+
+          {/* O peso não cabe no modal pedido: o preço é real, a entrega não é
+              exequível assim. Dizer as duas coisas é mais útil do que esconder
+              o orçamento ou fingir que cabe. */}
+          {quote && !quote.modal_fits && (
+            <p role="alert" className="text-xs text-amber-400">
+              {quote.modal_reason}
+              {quote.suggested_modal && ` Sugestão: ${modalLabel(quote.suggested_modal)}.`}
+            </p>
+          )}
+          {quote && quote.modal_fits && !simModal && quote.suggested_modal && (
+            <p className="text-xs text-slate-500">Modal mais económico para este peso: {modalLabel(quote.suggested_modal)}.</p>
           )}
         </Card>
       </div>

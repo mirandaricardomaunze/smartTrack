@@ -16,6 +16,8 @@ const {
   listOrders,
   createOrder,
   getOrderTracking,
+  getPodImages,
+  getPodImagesByCode,
   getDriverOrder,
   updateOrderStatus,
   requestWarehouseShipment,
@@ -139,11 +141,33 @@ router.get('/:id/driver-view', requireAuth, requireRoles(['ADMIN', 'DRIVER']), r
   }
 });
 
+// ─── GET /v1/orders/:id/pod ───────────────────────────────────────────────────
+// Imagens do comprovativo, sob pedido (spec § 3.28). Ficam fora da listagem de
+// propósito: são o objeto mais pesado do sistema e ninguém as quer 25 de cada vez.
+router.get('/:id/pod', requireAuth, requireRoles(['ADMIN', 'SUPPORT']), async (req, res) => {
+  try {
+    res.json(await getPodImages(req.params.id));
+  } catch (err) {
+    handleError(err, res);
+  }
+});
+
 // ─── GET /v1/orders/:code/status ──────────────────────────────────────────────
 router.get('/:code/status', async (req, res) => {
   try {
     const order = await getOrderTracking(req.params.code);
     res.json(order);
+  } catch (err) {
+    handleError(err, res);
+  }
+});
+
+// ─── GET /v1/orders/:code/status/pod ──────────────────────────────────────────
+// Equivalente público, para o portal de rastreio do cliente. Mantém a visibilidade
+// que a prova sempre teve neste ecrã — o que muda é só o momento em que é carregada.
+router.get('/:code/status/pod', async (req, res) => {
+  try {
+    res.json(await getPodImagesByCode(req.params.code));
   } catch (err) {
     handleError(err, res);
   }

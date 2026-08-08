@@ -293,6 +293,38 @@ async function getOrderTracking(trackingCode) {
   return order;
 }
 
+/**
+ * Imagens do comprovativo de um pedido, por id (spec § 3.28).
+ *
+ * Carregadas à parte: uma assinatura chega a 2,2 MB e nenhuma listagem precisa
+ * delas. O `findById` antes da leitura não é cerimónia — é o que garante que o
+ * pedido pertence à empresa de quem pergunta antes de a prova sair da base.
+ *
+ * @param {string} orderId
+ * @returns {Promise<{ signature?: string, photo?: string }>}
+ */
+async function getPodImages(orderId) {
+  const order = await OrderRepository.findById(orderId);
+  if (!order) throw new OrderNotFoundError(orderId);
+  if (!order.pod) return {};
+  return OrderRepository.findPodImages(order.id);
+}
+
+/**
+ * O mesmo, pelo código de rastreio — serve o portal público do cliente, que
+ * nunca teve login mas sempre mostrou a prova da sua própria entrega.
+ *
+ * @param {string} trackingCode
+ * @returns {Promise<{ signature?: string, photo?: string }>}
+ */
+async function getPodImagesByCode(trackingCode) {
+  const code  = String(trackingCode ?? '').trim().toUpperCase();
+  const order = await OrderRepository.findByCode(code);
+  if (!order) throw new OrderNotFoundError(code);
+  if (!order.pod) return {};
+  return OrderRepository.findPodImages(order.id);
+}
+
 /** Dados mínimos necessários ao motorista atribuído para executar a entrega. */
 async function getDriverOrder(orderId) {
   const order = await OrderRepository.findById(orderId);
@@ -616,7 +648,13 @@ async function deliverOrder(orderId, dto) {
     } catch { /* faturação é best-effort */ }
   }
 
-  return updatedOrder;
+  // A resposta não devolve as imagens (spec § 3.28). Devolvê-las era mandar de
+  // volta pela rede móvel os megabytes que o motorista acabou de enviar, para
+  // um cliente que já os tem. A leitura do POD é sempre por metadados.
+  return {
+    ...updatedOrder,
+    pod: { ...pod, signature: undefined, photo: undefined, has_signature: Boolean(signature), has_photo: Boolean(photo) },
+  };
 }
 
 /**
@@ -1160,6 +1198,8 @@ module.exports = {
   listOrders,
   createOrder,
   getOrderTracking,
+  getPodImages,
+  getPodImagesByCode,
   getDriverOrder,
   updateOrderStatus,
   receiveIntoWarehouse,

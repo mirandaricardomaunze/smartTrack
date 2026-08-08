@@ -12,6 +12,7 @@
 
 const crypto = require('crypto');
 const { PricingRepository } = require('../infrastructure/pg.repository');
+const modals = require('../domain/delivery-modals');
 
 const ServiceLevel = Object.freeze({ NORMAL: 'normal', EXPRESS: 'express' });
 
@@ -20,6 +21,22 @@ const SERVICE_MULTIPLIERS = Object.freeze({
   [ServiceLevel.NORMAL]:  1,
   [ServiceLevel.EXPRESS]: Number(process.env.PRICING_EXPRESS_MULTIPLIER) || 1.5,
 });
+
+/**
+ * Multiplicadores por modal de entrega (§ 3.33).
+ *
+ * Uma entrega de moto não custa o mesmo que uma de van, e cobrar igual empurra
+ * o cliente para o concorrente na encomenda pequena — que é o grosso do volume.
+ * O default vem do catálogo (moto 0,7 · mototriciclo 0,85 · carro 1) e cada
+ * modal é sobreponível por ambiente, como o EXPRESS: `PRICING_MODAL_MOTO_MULTIPLIER`.
+ * Sem modal na entrada o preço fica exatamente como estava — 1, sem linha.
+ */
+const MODAL_MULTIPLIERS = Object.freeze(Object.fromEntries(
+  modals.listModals().map((modal) => [
+    modal.code,
+    Number(process.env[`PRICING_MODAL_${modal.code}_MULTIPLIER`]) || modal.price_multiplier,
+  ]),
+));
 
 /** Sobretaxa de COD como % do valor a cobrar (0 = desligada por default). */
 const COD_SURCHARGE_PCT = Number(process.env.PRICING_COD_SURCHARGE_PCT) || 0;
@@ -40,18 +57,29 @@ class DuplicateZoneCodeError extends Error {
 
 /**
  * Calcula o orçamento de frete.
- * @param {{ weight_grams?: number; service?: string; cod_amount?: number }} input
+ *
+ * O modal é opcional: sem ele o cálculo é o de sempre e o detalhe traz
+ * `modal_cents: 0`. Com ele, o preço é ajustado pelo multiplicador do modal e o
+ * detalhe diz se a carga cabe — orçar 40 kg "de moto" tem de responder que não
+ * cabe, e não devolver um preço que a operação depois não consegue cumprir
+ * (§ 3.33). O orçamento não é recusado: `suggested_modal` dá a alternativa.
+ *
+ * @param {{ weight_grams?: number; service?: string; cod_amount?: number; vehicle_modal?: string }} input
  * @param {{ code: string; name: string; base_cents: number; per_kg_cents: number; included_kg: number }} zone
- * @param {{ serviceMultipliers?: object; codSurchargePct?: number }} [cfg]
+ * @param {{ serviceMultipliers?: object; modalMultipliers?: object; codSurchargePct?: number }} [cfg]
  * @returns {import('../../../shared/types/src/pricing.types').QuoteBreakdown}
  */
 function computeQuote(input, zone, cfg = {}) {
   const multipliers = cfg.serviceMultipliers ?? SERVICE_MULTIPLIERS;
+  const modalMultipliers = cfg.modalMultipliers ?? MODAL_MULTIPLIERS;
   const codPct = cfg.codSurchargePct ?? COD_SURCHARGE_PCT;
 
   const service = input.service && multipliers[input.service] != null ? input.service : ServiceLevel.NORMAL;
   const weightGrams = Math.max(0, Math.round(Number(input.weight_grams) || 0));
   const codAmount = Math.max(0, Math.round(Number(input.cod_amount) || 0));
+
+  const vehicle_modal = modals.normalizeModalCode(input.vehicle_modal);
+  const modalMultiplier = vehicle_modal ? (modalMultipliers[vehicle_modal] ?? 1) : 1;
 
   const includedGrams = Math.round(Number(zone.included_kg) * 1000);
   const excessGrams = Math.max(0, weightGrams - includedGrams);
@@ -61,21 +89,32 @@ function computeQuote(input, zone, cfg = {}) {
 
   const preService = base_cents + weight_cents;
   const service_cents = Math.round(preService * (multipliers[service] - 1));
+  const modal_cents = Math.round(preService * (modalMultiplier - 1));
   const cod_surcharge_cents = Math.round((codAmount * codPct) / 100);
 
-  const total_cents = base_cents + weight_cents + service_cents + cod_surcharge_cents;
+  const total_cents = base_cents + weight_cents + service_cents + modal_cents + cod_surcharge_cents;
+
+  const fit = vehicle_modal
+    ? modals.fitsModal({ weight_grams: weightGrams }, vehicle_modal)
+    : { ok: true };
 
   return {
     zone_code: zone.code,
     zone_name: zone.name,
     service,
+    vehicle_modal,
     weight_grams: weightGrams,
     base_cents,
     weight_cents,
     service_cents,
+    modal_cents,
     cod_surcharge_cents,
     total_cents,
     currency: 'MZN',
+    modal_fits: fit.ok,
+    modal_reason: fit.ok ? null : fit.reason,
+    // Sem modal pedido, é a recomendação; com modal a mais pequeno que serve.
+    suggested_modal: modals.smallestModalFor({ weight_grams: weightGrams }),
   };
 }
 
@@ -84,6 +123,16 @@ function computeQuote(input, zone, cfg = {}) {
 /** Orçamento a partir do código de zona. */
 async function quote(input = {}) {
   if (!input.zone_code) throw new PricingValidationError('A zona é obrigatória.');
+
+  // Um modal que o catálogo não conhece é erro, não ausência: ignorá-lo em
+  // silêncio devolvia o preço de carro a quem escreveu "motoo" e pediu moto.
+  if (input.vehicle_modal != null && String(input.vehicle_modal).trim() !== ''
+      && !modals.normalizeModalCode(input.vehicle_modal)) {
+    throw new PricingValidationError(
+      `Modal de entrega inválido: "${input.vehicle_modal}". Use ${modals.MODAL_CODES.join(', ')}.`,
+    );
+  }
+
   const zone = await PricingRepository.findZoneByCode(input.zone_code);
   if (!zone) throw new ZoneNotFoundError(input.zone_code);
   if (!zone.active) throw new PricingValidationError(`A zona "${zone.code}" está inativa.`);
@@ -152,6 +201,7 @@ module.exports = {
   updateZone,
   deactivateZone,
   SERVICE_MULTIPLIERS,
+  MODAL_MULTIPLIERS,
   ServiceLevel,
   PricingValidationError,
   ZoneNotFoundError,

@@ -12,14 +12,13 @@ out/
 *.tsbuildinfo
 
 # ─── Variáveis de Ambiente (NUNCA commitar) ──
+# Regra abrangente: qualquer .env em qualquer pasta (raiz, backend/*, frontend/*,
+# infra/docker) fica de fora. Só os modelos *.example são versionados — esses
+# nunca levam valores reais, apenas as chaves vazias.
 .env
-.env.local
-.env.development
-.env.production
-.env.staging
-.env.prod
+.env.*
 !.env.example
-!.env.prod.example
+!.env.*.example
 
 # ─── Logs ────────────────────────────────────
 logs/

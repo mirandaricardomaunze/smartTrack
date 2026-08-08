@@ -30,20 +30,38 @@ export interface PodGeoPoint {
   lng: number;
 }
 
-/** Comprovativo de entrega. */
+/**
+ * Comprovativo de entrega.
+ *
+ * As imagens NÃO viajam aqui (spec § 3.28). O que fica guardado no pedido são os
+ * metadados mais os sinalizadores; a assinatura e a foto vivem em
+ * `order_pod_images` e leem-se por `GET /v1/orders/:id/pod`. `signature` e
+ * `photo` continuam a existir no tipo porque são o que o motorista ENVIA ao
+ * registar a entrega — só não é o que a leitura devolve.
+ */
 export interface ProofOfDelivery {
   method: PodMethod;
   /** Nome de quem recebeu (obrigatório). */
   recipient_name: string;
-  /** Assinatura desenhada, como data URL PNG. */
+  /** Assinatura desenhada, como data URL PNG. Só na ESCRITA. */
   signature?: string;
-  /** Foto da entrega, como data URL. */
+  /** Foto da entrega, como data URL. Só na ESCRITA. */
   photo?: string;
+  /** Há assinatura guardada? Substitui a imagem na LEITURA. */
+  has_signature?: boolean;
+  /** Há foto guardada? Substitui a imagem na LEITURA. */
+  has_photo?: boolean;
   notes?: string;
   coords?: PodGeoPoint;
   /** Utilizador que registou a entrega (motorista/admin). */
   captured_by?: string;
   captured_at: string; // ISO8601 UTC
+}
+
+/** Imagens do comprovativo, carregadas sob pedido (spec § 3.28). */
+export interface PodImages {
+  signature?: string;
+  photo?: string;
 }
 
 /** Payload de registo de insucesso de entrega. */

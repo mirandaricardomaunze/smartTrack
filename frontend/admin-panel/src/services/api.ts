@@ -25,15 +25,30 @@ export interface HistoryItem {
 export type PodMethod = 'signature' | 'photo' | 'signature_photo';
 export type DeliveryFailureReason = 'RECIPIENT_ABSENT' | 'WRONG_ADDRESS' | 'REFUSED' | 'OTHER';
 
+/**
+ * Comprovativo de entrega (spec § 3.28).
+ *
+ * A leitura devolve só metadados: `has_signature`/`has_photo` dizem que existe
+ * prova, e as imagens vêm depois por `getOrderPod(id)`. `signature`/`photo`
+ * permanecem no tipo porque são o que se ENVIA ao registar a entrega.
+ */
 export interface ProofOfDelivery {
   method: PodMethod;
   recipient_name: string;
-  signature?: string; // data URL PNG
-  photo?: string;     // data URL
+  signature?: string; // data URL PNG — só na escrita
+  photo?: string;     // data URL — só na escrita
+  has_signature?: boolean;
+  has_photo?: boolean;
   notes?: string;
   coords?: { lat: number; lng: number };
   captured_by?: string;
   captured_at: string;
+}
+
+/** Imagens do comprovativo, carregadas sob pedido. */
+export interface PodImages {
+  signature?: string;
+  photo?: string;
 }
 
 export interface BackendOrder {
@@ -111,7 +126,31 @@ export interface FinanceEntry { id:string;type:'payable'|'receivable';descriptio
 export interface FinanceSummary { cash_balance_cents:number;income_paid_cents:number;expense_paid_cents:number;receivable_open_cents:number;payable_open_cents:number;overdue_cents:number; }
 export interface FleetVehicle { id:string;plate:string;make:string;model:string;year?:number;vehicle_type?:string;fuel_type:string;odometer_km:number;status:string;insurance_expiry?:string;inspection_expiry?:string;document_expired:boolean;document_expiring:boolean; }
 export interface FuelEntry { id:string;vehicle_id:string;plate:string;make:string;model:string;fuel_date:string;odometer_km:number;volume_ml:number;cost_cents:number;full_tank:boolean;station?:string;consumption_l_per_100km?:number|null; }
-export interface FleetStats { total:number;active:number;maintenance:number;fuel_cost_cents:number;fuel_volume_ml:number;average_consumption:number; }
+export interface FleetStats { total:number;active:number;maintenance:number;fuel_cost_cents:number;fuel_volume_ml:number;average_consumption:number;by_modal:Array<{modal:string;total:number}>;two_three_wheelers:number; }
+
+// ─── Modais de entrega (spec § 3.33) ─────────────────────────────────────────
+
+/**
+ * Modal de entrega. Motociclo e mototriciclo são a última milha; o painel nunca
+ * escreve estas capacidades à mão — lê-as de `GET /v1/fleet/modals`, que serve
+ * o mesmo catálogo que o despacho usa para recusar uma rota pesada de mais.
+ */
+export type DeliveryModalCode = 'MOTO' | 'MOTOTRICICLO' | 'CARRO' | 'VAN' | 'CAMINHAO';
+
+export interface DeliveryModalSpec {
+  code: DeliveryModalCode;
+  label: string;
+  operator_label: string;
+  capacity_kg: number;
+  volume_l: number;
+  max_dimension_cm: number;
+  licence_categories: string[];
+  default_fuel: string;
+  wheels: number;
+  weather_exposed: boolean;
+  price_multiplier: number;
+  sort_order: number;
+}
 export interface CreateHrEmployee { employee_number:string; full_name:string; email?:string; phone?:string; tax_id?:string; department_id?:string; shift_id?:string; job_title:string; employment_type:HrEmployee['employment_type']; hire_date:string; salary_cents:number; notes?:string; }
 
 // ─── Tarifação (spec § 3.13) ─────────────────────────────────────────────────
@@ -135,19 +174,25 @@ export interface QuoteBreakdown {
   zone_code: string;
   zone_name: string;
   service: ServiceLevel;
+  vehicle_modal: DeliveryModalCode | null;
   weight_grams: number;
   base_cents: number;
   weight_cents: number;
   service_cents: number;
+  modal_cents: number;
   cod_surcharge_cents: number;
   total_cents: number;
   currency: 'MZN';
+  modal_fits: boolean;
+  modal_reason: string | null;
+  suggested_modal: DeliveryModalCode | null;
 }
 
 export interface QuoteInput {
   weight_grams?: number;
   zone_code: string;
   service?: ServiceLevel;
+  vehicle_modal?: DeliveryModalCode;
   cod_amount?: number;
 }
 
@@ -799,9 +844,11 @@ export interface BackendDriver {
   email: string;
   phone: string;
   vehicle: {
-    type: 'MOTO' | 'CARRO' | 'VAN' | 'CAMINHAO';
+    type: DeliveryModalCode;
     plate: string;
     capacity_kg: number;
+    /** Categoria da carta que habilita o modal (§ 3.33). */
+    licence_category?: string;
   };
   current_status: 'available' | 'on_route' | 'offline';
   performance_metrics: {
@@ -818,6 +865,36 @@ export interface BackendDriver {
     speed: number;
     updatedAt: string;
   };
+  /**
+   * O motorista já tem conta para entrar na aplicação? (spec § 3.32)
+   * Sem conta, o registo existe no painel mas ninguém executa as entregas.
+   */
+  has_access?: boolean;
+}
+
+// ─── Contas e acessos (spec § 3.32) ──────────────────────────────────────────
+
+/** Papéis que uma conta de painel pode ter — os que os endpoints honram. */
+export type PanelRole = 'ADMIN' | 'SUPPORT';
+
+export type AccountRole = PanelRole | 'SUPERADMIN' | 'DRIVER' | 'EMPLOYEE' | 'CLIENT' | 'SYSTEM';
+
+export interface AccessAccount {
+  id: string;
+  name: string;
+  email: string;
+  role: AccountRole;
+  company_id?: string;
+  status: 'active' | 'blocked';
+  blocked_at?: string;
+  created_at: string;
+}
+
+export interface PasswordRecoveryAvailability {
+  available: boolean;
+  channel: 'email';
+  /** O que dizer a quem perdeu a senha quando o canal não existe. */
+  fallback: string;
 }
 
 export type StopStatus = 'pending' | 'delivered' | 'failed';
@@ -1410,6 +1487,13 @@ export const adminApi = {
     return mapBackendOrderToOrder(raw);
   },
 
+  /**
+   * Spec § 3.28 — imagens do comprovativo, carregadas só quando alguém as quer ver.
+   * A listagem devolve `has_signature`/`has_photo`; a imagem em si custa megabytes
+   * e não tem por que atravessar a rede antes de o operador abrir o detalhe.
+   */
+  getOrderPod: (id: string): Promise<PodImages> => fetchApi<PodImages>(`/orders/${id}/pod`),
+
   /** Spec § 3.1/§3.3 — gera um código de entrega e envia-o ao cliente por SMS. */
   requestDeliveryOtp: (id: string): Promise<{ sent: boolean; expires_at: string }> =>
     fetchApi<{ sent: boolean; expires_at: string }>(`/orders/${id}/delivery-otp`, { method: 'POST' }),
@@ -1446,6 +1530,47 @@ export const adminApi = {
     }),
 
   getMotoristas: (): Promise<BackendDriver[]> => fetchApi<BackendDriver[]>('/drivers'),
+
+  /** Registra um motorista. O acesso à aplicação cria-se depois, à parte. */
+  createMotorista: (data: {
+    name: string; phone?: string; email?: string;
+    vehicle: { type: DeliveryModalCode; plate: string; capacity_kg?: number; licence_category?: string };
+  }): Promise<BackendDriver> => fetchApi<BackendDriver>('/drivers', { method: 'POST', body: JSON.stringify(data) }),
+
+  // ── Contas e acessos (spec § 3.32) ────────────────────────────────────────
+
+  /**
+   * A recuperação por email está disponível nesta instalação?
+   * Consultada pela página de login para não oferecer um caminho que, sem
+   * provedor de email configurado, não leva a nada.
+   */
+  getPasswordRecovery: (): Promise<PasswordRecoveryAvailability> =>
+    fetchApi<PasswordRecoveryAvailability>('/auth/password-recovery'),
+
+  /** Quem tem acesso a esta empresa — painel, motoristas e portal, tudo junto. */
+  getAccounts: (): Promise<AccessAccount[]> => fetchApi<AccessAccount[]>('/users'),
+
+  /** Cria uma conta de painel (ADMIN ou SUPPORT). */
+  createAccount: (data: { name: string; email: string; password: string; role: PanelRole }): Promise<AccessAccount> =>
+    fetchApi<AccessAccount>('/users', { method: 'POST', body: JSON.stringify(data) }),
+
+  /** Reemite a senha de uma conta — o caminho que não depende de email. */
+  setAccountPassword: (id: string, password: string): Promise<AccessAccount> =>
+    fetchApi<AccessAccount>(`/users/${encodeURIComponent(id)}/password`, { method: 'PUT', body: JSON.stringify({ password }) }),
+
+  /** Suspende ou reativa o acesso de uma conta. */
+  setAccountStatus: (id: string, status: 'active' | 'blocked'): Promise<AccessAccount> =>
+    fetchApi<AccessAccount>(`/users/${encodeURIComponent(id)}/status`, { method: 'PUT', body: JSON.stringify({ status }) }),
+
+  /**
+   * Cria o acesso à aplicação de um motorista.
+   * A conta fica com o id do motorista — é assim que a aplicação encontra a rota
+   * e as entregas dele (ver `drivers.service.grantDriverAccess`).
+   */
+  grantDriverAccess: (driverId: string, data: { email: string; password: string }): Promise<AccessAccount & { driver_id: string }> =>
+    fetchApi<AccessAccount & { driver_id: string }>(`/drivers/${encodeURIComponent(driverId)}/access`, {
+      method: 'POST', body: JSON.stringify(data),
+    }),
 
   getHrStats: (): Promise<HrStats> => fetchApi<HrStats>('/hr/stats'),
   getHrDepartments: (): Promise<HrDepartment[]> => fetchApi<HrDepartment[]>('/hr/departments'),
@@ -1485,6 +1610,8 @@ export const adminApi = {
   createFinanceEntry: (data:Partial<FinanceEntry>&{type:'payable'|'receivable';description:string;amount_cents:number;due_date:string}):Promise<FinanceEntry> => fetchApi<FinanceEntry>('/finance/entries',{method:'POST',body:JSON.stringify(data)}),
   settleFinanceEntry: (id:string,payment_method:string,payment_reference?:string):Promise<FinanceEntry> => fetchApi<FinanceEntry>(`/finance/entries/${id}/settle`,{method:'POST',body:JSON.stringify({payment_method,payment_reference})}),
   voidFinanceEntry: (id:string):Promise<FinanceEntry> => fetchApi<FinanceEntry>(`/finance/entries/${id}/void`,{method:'POST'}),
+  /** Catálogo de modais (§ 3.33) — capacidades vindas do backend, não repetidas aqui. */
+  getDeliveryModals: ():Promise<DeliveryModalSpec[]> => fetchApi<DeliveryModalSpec[]>('/fleet/modals'),
   getFleetStats: ():Promise<FleetStats> => fetchApi<FleetStats>('/fleet/stats'),getFleetVehicles:():Promise<FleetVehicle[]>=>fetchApi<FleetVehicle[]>('/fleet/vehicles'),createFleetVehicle:(data:Partial<FleetVehicle>):Promise<FleetVehicle>=>fetchApi<FleetVehicle>('/fleet/vehicles',{method:'POST',body:JSON.stringify(data)}),getFuelEntries:():Promise<FuelEntry[]>=>fetchApi<FuelEntry[]>('/fleet/fuel'),createFuelEntry:(data:Partial<FuelEntry>&{vehicle_id:string;volume_ml:number;cost_cents:number;odometer_km:number;fuel_date:string}):Promise<FuelEntry>=>fetchApi<FuelEntry>('/fleet/fuel',{method:'POST',body:JSON.stringify(data)}),
 
   /** Histórico operacional das notificações push, da mais recente para a mais antiga. */

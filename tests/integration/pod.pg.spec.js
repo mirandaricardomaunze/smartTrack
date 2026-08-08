@@ -72,7 +72,9 @@ describe.skipIf(!disponivel)('api-gateway · entrega/POD · PostgreSQL', () => {
     expect(order.current_status).toBe('delivered');
     expect(order.pod).toBeTruthy();
     expect(order.pod.recipient_name).toBe('Ana Cliente');
-    expect(order.pod.signature).toContain('data:image/png');
+    // A resposta confirma que há assinatura, sem a devolver (spec § 3.28).
+    expect(order.pod.has_signature).toBe(true);
+    expect(order.pod.signature).toBeUndefined();
     expect(order.history[0].status).toBe('delivered');
     expect(order.history[0].recipient_name).toBe('Ana Cliente');
 
@@ -80,6 +82,10 @@ describe.skipIf(!disponivel)('api-gateway · entrega/POD · PostgreSQL', () => {
     const reloaded = await repo.findById(O1);
     expect(reloaded.current_status).toBe('delivered');
     expect(reloaded.pod.recipient_name).toBe('Ana Cliente');
+
+    // E a assinatura está guardada, só noutro sítio.
+    const images = await repo.findPodImages(O1);
+    expect(images.signature).toContain('data:image/png');
   });
 
   it('should reject delivery when the order is not out for delivery', async () => {

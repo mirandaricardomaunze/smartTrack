@@ -18,6 +18,8 @@ export interface TestProofOfDelivery {
   recipient_name: string;
   signature?: string;
   photo?: string;
+  has_signature?: boolean;
+  has_photo?: boolean;
   notes?: string;
   coords?: { lat: number; lng: number };
   captured_by?: string;
@@ -58,6 +60,46 @@ export class PodFactory {
   /** Assinatura + foto. */
   static buildWithPhoto(overrides: Partial<TestProofOfDelivery> = {}): TestProofOfDelivery {
     return this.build({ method: PodMethod.SIGNATURE_PHOTO, signature: TINY_PNG_DATA_URL, photo: TINY_PNG_DATA_URL, ...overrides });
+  }
+}
+
+/**
+ * Data URL de tamanho controlado — para exercitar os limites da POD sem carregar
+ * um ficheiro real para memória.
+ *
+ * @param chars comprimento total do data URL devolvido
+ */
+export function dataUrlOfSize(chars: number): string {
+  const prefix = 'data:image/jpeg;base64,';
+  const payload = Math.max(0, chars - prefix.length);
+  return prefix + 'A'.repeat(payload);
+}
+
+/**
+ * Fotografia de telemóvel realista: acima do tecto do backend, como sai de uma
+ * câmara moderna. É este o caso que fazia o motorista ficar sem conseguir
+ * fechar a entrega (spec § 3.28).
+ */
+export const PHONE_PHOTO_BYTES = 4_200_000;
+
+/** Imagens devolvidas por `GET /v1/orders/:id/pod`. */
+export interface TestPodImages {
+  signature?: string;
+  photo?: string;
+}
+
+export class PodImagesFactory {
+  static build(overrides: Partial<TestPodImages> = {}): TestPodImages {
+    return { signature: TINY_PNG_DATA_URL, photo: undefined, ...overrides };
+  }
+
+  static buildBoth(overrides: Partial<TestPodImages> = {}): TestPodImages {
+    return { signature: TINY_PNG_DATA_URL, photo: TINY_PNG_DATA_URL, ...overrides };
+  }
+
+  /** Par de imagens pesadas — o cenário que motivou a tabela à parte. */
+  static buildHeavy(chars = 1_000_000): TestPodImages {
+    return { signature: dataUrlOfSize(chars), photo: dataUrlOfSize(chars) };
   }
 }
 

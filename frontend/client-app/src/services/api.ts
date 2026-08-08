@@ -21,12 +21,23 @@ export interface TrackingEvento {
   timestamp:   string;
 }
 
-/** Comprovativo de entrega (POD) — subconjunto exibido ao cliente. */
+/**
+ * Comprovativo de entrega (POD) — subconjunto exibido ao cliente.
+ *
+ * As imagens não vêm no rastreio (spec § 3.28): os sinalizadores dizem que a
+ * prova existe e `fetchTrackingPod` vai buscá-la só se o cliente abrir a entrega.
+ */
 export interface TrackingPod {
-  recebidoPor:  string;
-  assinatura?:  string; // data URL
-  foto?:        string; // data URL
-  registadoEm:  string;
+  recebidoPor:   string;
+  temAssinatura: boolean;
+  temFoto:       boolean;
+  registadoEm:   string;
+}
+
+/** Imagens do comprovativo, carregadas sob pedido. */
+export interface TrackingPodImagens {
+  assinatura?: string; // data URL
+  foto?:       string; // data URL
 }
 
 export interface TrackingPedido {
@@ -66,10 +77,10 @@ function mapOrder(o: any): TrackingPedido {
       timestamp:   h.timestamp ?? '',
     })),
     pod: o.pod ? {
-      recebidoPor: cleanDisplayText(o.pod.recipient_name),
-      assinatura:  o.pod.signature,
-      foto:        o.pod.photo,
-      registadoEm: o.pod.captured_at ?? '',
+      recebidoPor:   cleanDisplayText(o.pod.recipient_name),
+      temAssinatura: Boolean(o.pod.has_signature),
+      temFoto:       Boolean(o.pod.has_photo),
+      registadoEm:   o.pod.captured_at ?? '',
     } : undefined,
   };
 }
@@ -80,6 +91,22 @@ export async function fetchTrackingStatus(code: string): Promise<TrackingPedido>
     throw new Error('Código de rastreio não encontrado no sistema.');
   }
   return mapOrder(await response.json());
+}
+
+/**
+ * Imagens do comprovativo desta encomenda (spec § 3.28).
+ *
+ * Chamada só quando a entrega está concluída e há prova a mostrar — é o pedido
+ * mais pesado do rastreio e não faz sentido no caminho de quem só quer saber
+ * onde anda a encomenda.
+ */
+export async function fetchTrackingPod(code: string): Promise<TrackingPodImagens> {
+  const response = await fetch(`${API_URL}/${API_VERSION}/orders/${code}/status/pod`);
+  if (!response.ok) {
+    throw new Error('Não foi possível carregar o comprovativo.');
+  }
+  const data = await response.json();
+  return { assinatura: data.signature, foto: data.photo };
 }
 
 /**

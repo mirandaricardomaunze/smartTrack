@@ -44,6 +44,19 @@ class CompanySuspendedError extends Error {
   }
 }
 
+/**
+ * Conta suspensa por um administrador da própria empresa (spec § 3.32).
+ * Separada de `CompanySuspendedError` porque a pessoa a quem se diz isto tem de
+ * saber a quem se dirigir: aqui é a empresa dela, não a plataforma.
+ */
+class AccountBlockedError extends Error {
+  constructor() {
+    super('Esta conta está suspensa. Contacte o administrador da sua empresa.');
+    this.name = 'AccountBlockedError';
+    this.statusCode = 403;
+  }
+}
+
 class ValidationError extends Error {
   /** @param {string} message */
   constructor(message) {
@@ -197,6 +210,11 @@ async function login(email, password) {
   await UserRepository.ensureTable();
   const row = await UserRepository.findByEmailWithHash(normalizedEmail);
   if (row && verifyPassword(password, row.password_hash)) {
+    // Acesso individual (spec § 3.32): uma conta suspensa não entra, mesmo com a
+    // senha certa. Verificado ANTES da empresa porque é a decisão mais próxima
+    // da pessoa — quem foi suspenso quer saber que foi ele, não a empresa.
+    if (row.status === 'blocked') throw new AccountBlockedError();
+
     // Multiempresa (spec § 2.4): uma empresa suspensa não deixa os seus utilizadores entrar.
     if (row.company_id) {
       const company = await CompanyRepository.findById(row.company_id);
@@ -302,6 +320,7 @@ module.exports = {
   requireBodySubjectOrRoles,
   InvalidCredentialsError,
   CompanySuspendedError,
+  AccountBlockedError,
   ValidationError,
   EmailInUseError,
   UnauthorizedError,

@@ -5,7 +5,7 @@
  * Spec ref: docs/spec/especificacao-tecnica-v1.md § 3.13
  *
  *   GET   /v1/pricing/zones          lista de zonas (ADMIN/SUPPORT)
- *   POST  /v1/pricing/quote          orçamento { weight_grams, zone_code, service, cod_amount }
+ *   POST  /v1/pricing/quote          orçamento { weight_grams, zone_code, service, cod_amount, vehicle_modal }
  *   POST  /v1/pricing/zones          criar zona (ADMIN)
  *   PUT   /v1/pricing/zones/:id       atualizar zona (ADMIN)
  *   POST  /v1/pricing/zones/:id/deactivate   desativar zona (ADMIN)

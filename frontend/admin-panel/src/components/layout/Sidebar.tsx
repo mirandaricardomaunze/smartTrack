@@ -245,6 +245,7 @@ const NAV_GROUPS_STATIC: Omit<NavItem, 'badge' | 'badgeVariant'>[][] = [
     { href: '/mensagens',     label: 'Mensagens',     icon: <IconMessage /> },
     { href: '/plano',         label: 'Plano & Uso',   icon: <IconPlan /> },
     { href: '/empresa',       label: 'Empresa',       icon: <IconBuilding /> },
+    { href: '/utilizadores',  label: 'Utilizadores',  icon: <IconPeople /> },
     { href: '/auditoria',     label: 'Auditoria',     icon: <IconAudit /> },
     { href: '/configuracoes', label: 'Configurações', icon: <IconSettings /> },
     { href: '/integracoes',   label: 'Integrações',   icon: <IconIntegration /> },

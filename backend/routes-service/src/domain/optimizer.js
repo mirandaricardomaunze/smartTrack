@@ -15,8 +15,12 @@
  *
  * LIMITES CONHECIDOS (§ 3.2 pede também estes fatores, ainda não cobertos):
  *   - Não considera trânsito em tempo real — exige Directions API.
- *   - Não considera janelas de entrega nem capacidade do veículo.
+ *   - Não considera janelas de entrega.
  *   - Usa distância geodésica, não distância de condução pela malha viária.
+ * A capacidade do veículo é verificada FORA daqui: o gateway recusa a rota
+ * antes de a otimizar quando a carga não cabe no veículo do motorista
+ * (§ 3.33, `application/dispatch.service.js`). Este módulo só vê paradas —
+ * não conhece motoristas nem pesos.
  * Quando o Google Maps Platform for ligado (§ 6 da spec), este módulo passa a
  * ser o fallback offline.
  *

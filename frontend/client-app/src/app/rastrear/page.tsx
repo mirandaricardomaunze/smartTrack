@@ -1,7 +1,7 @@
 'use client';
 
-import { useState } from 'react';
-import { fetchTrackingStatus, requestShipment } from '@/services/api';
+import { useEffect, useState } from 'react';
+import { fetchTrackingPod, fetchTrackingStatus, requestShipment, type TrackingPodImagens } from '@/services/api';
 import { Button, Input } from '@/components/ui';
 
 interface Evento {
@@ -13,8 +13,9 @@ interface Evento {
 
 interface Pod {
   recebidoPor: string;
-  assinatura?: string;
-  foto?: string;
+  /** Há prova guardada? As imagens vêm à parte (spec § 3.28). */
+  temAssinatura: boolean;
+  temFoto: boolean;
   registadoEm: string;
 }
 
@@ -174,6 +175,7 @@ export default function RastrearPage() {
   const [searched, setSearched] = useState(false);
   const [loading, setLoading] = useState(false);
   const [isOffline, setIsOffline] = useState(false);
+  const [podImagens, setPodImagens] = useState<TrackingPodImagens | null>(null);
 
   // Solicitar envio (spec § 8.2 — cliente confirma o destino no armazém)
   const [reqDestino, setReqDestino] = useState('');
@@ -183,6 +185,24 @@ export default function RastrearPage() {
   const [reqSubmitting, setReqSubmitting] = useState(false);
   const [reqError, setReqError] = useState('');
   const [reqDone, setReqDone] = useState(false);
+
+  /**
+   * Comprovativo: buscado só quando a encomenda está entregue e há prova (spec § 3.28).
+   * Quem consulta o rastreio a meio do percurso nunca paga o custo destas imagens.
+   */
+  useEffect(() => {
+    const pod = pedido?.pod;
+    if (!pedido || pedido.statusCode !== 'delivered' || !pod || (!pod.temAssinatura && !pod.temFoto)) {
+      setPodImagens(null);
+      return;
+    }
+    let cancelled = false;
+    setPodImagens(null);
+    fetchTrackingPod(pedido.codigoRastreio)
+      .then((imagens) => { if (!cancelled) setPodImagens(imagens); })
+      .catch(() => { if (!cancelled) setPodImagens({}); });
+    return () => { cancelled = true; };
+  }, [pedido]);
 
   function resetRequestForm(p: Pedido | null) {
     setReqDestino(p?.destino || '');
@@ -448,18 +468,22 @@ export default function RastrearPage() {
                     Recebido por <strong className="text-slate-100">{pedido.pod.recebidoPor}</strong>
                     {pedido.pod.registadoEm && <> em {formatTs(pedido.pod.registadoEm).date} {formatTs(pedido.pod.registadoEm).time}</>}.
                   </p>
-                  {(pedido.pod.assinatura || pedido.pod.foto) && (
+                  {/* Imagens fora do rastreio (spec § 3.28) — chegam depois, se existirem. */}
+                  {(pedido.pod.temAssinatura || pedido.pod.temFoto) && (
                     <div className="flex gap-4">
-                      {pedido.pod.assinatura && (
+                      {!podImagens && <span className="text-[11px] text-slate-500 self-center">A carregar comprovativo...</span>}
+                      {podImagens?.assinatura && (
                         <div>
                           <span className="block text-[10px] text-slate-500 mb-1">Assinatura</span>
-                          <img src={pedido.pod.assinatura} alt="Assinatura do destinatário" className="h-16 rounded-lg bg-surface border border-white/10" />
+                          {/* eslint-disable-next-line @next/next/no-img-element -- A imagem é um data: URL vindo do POD — next/image não otimiza data URLs. */}
+                          <img src={podImagens.assinatura} alt="Assinatura do destinatário" className="h-16 rounded-lg bg-surface border border-white/10" />
                         </div>
                       )}
-                      {pedido.pod.foto && (
+                      {podImagens?.foto && (
                         <div>
                           <span className="block text-[10px] text-slate-500 mb-1">Foto</span>
-                          <img src={pedido.pod.foto} alt="Foto da entrega" className="h-16 w-16 rounded-lg object-cover border border-white/10" />
+                          {/* eslint-disable-next-line @next/next/no-img-element -- A imagem é um data: URL vindo do POD — next/image não otimiza data URLs. */}
+                          <img src={podImagens.foto} alt="Foto da entrega" className="h-16 w-16 rounded-lg object-cover border border-white/10" />
                         </div>
                       )}
                     </div>

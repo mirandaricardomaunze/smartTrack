@@ -13,7 +13,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   adminApi,
-  COD_METHOD_LABELS,
   type DriverSettlement,
   type SettlementStats,
   type BackendDriver,

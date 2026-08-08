@@ -60,7 +60,10 @@ export interface Code128Options {
  * As barras são pretas sobre fundo branco (para leitura fiável na impressão).
  */
 export function toSvg(text: string, opts: Code128Options = {}): string {
-  const module = opts.module ?? 1.6;
+  // `moduleWidth` e não `module`: em Code 128 o "módulo" é a barra mais estreita,
+  // mas `module` é um identificador que o empacotador injeta no âmbito do
+  // ficheiro. Declarar uma constante com esse nome sombreia-o e parte o chunk.
+  const moduleWidth = opts.module ?? 1.6;
   const height = opts.height ?? 56;
   const quiet = opts.quiet ?? 10;
 
@@ -71,11 +74,11 @@ export function toSvg(text: string, opts: Code128Options = {}): string {
     const pattern = PATTERNS[code];
     for (let j = 0; j < pattern.length; j += 1) {
       const w = Number(pattern[j]);
-      if (j % 2 === 0) bars.push(`<rect x="${(x * module).toFixed(2)}" y="0" width="${(w * module).toFixed(2)}" height="${height}" />`);
+      if (j % 2 === 0) bars.push(`<rect x="${(x * moduleWidth).toFixed(2)}" y="0" width="${(w * moduleWidth).toFixed(2)}" height="${height}" />`);
       x += w;
     }
   }
   const totalModules = x + quiet;
-  const width = totalModules * module;
+  const width = totalModules * moduleWidth;
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width.toFixed(2)} ${height}" width="${width.toFixed(2)}" height="${height}" role="img" aria-label="Código de barras ${sanitize(text)}"><rect x="0" y="0" width="${width.toFixed(2)}" height="${height}" fill="#fff"/><g fill="#000">${bars.join('')}</g></svg>`;
 }

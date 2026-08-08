@@ -7,7 +7,7 @@
  * Alinhado com backend/shared/types/src/support.types.ts.
  * REGRA: nunca criar dados de teste inline nos .spec — usar sempre estas factories.
  */
-import { SupportSender, SupportThreadStatus } from '../../../backend/shared/types/src/support.types';
+import { SupportSender } from '../../../backend/shared/types/src/support.types';
 
 export interface TestSupportThreadInput {
   client_name: string;

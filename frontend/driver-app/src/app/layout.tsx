@@ -27,6 +27,16 @@ export default function RootLayout({
 }) {
   return (
     <html lang="pt-BR">
+      <head>
+        {/* Ver a nota do preload no admin-panel: evita o salto de tipo de letra. */}
+        <link
+          rel="preload"
+          href="/fonts/inter-latin.woff2"
+          as="font"
+          type="font/woff2"
+          crossOrigin="anonymous"
+        />
+      </head>
       <body className="bg-surface-base text-slate-100 min-h-screen flex flex-col justify-between">
         <header className="h-14 border-b border-white/[0.06] bg-surface flex items-center justify-between px-4 sticky top-0 z-50">
           <div className="flex items-center gap-2">

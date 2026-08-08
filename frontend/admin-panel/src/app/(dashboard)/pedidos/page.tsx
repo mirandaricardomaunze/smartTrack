@@ -6,7 +6,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { adminApi, Pedido, HistoricoItem, type BackendDriver, type Warehouse, type DeliveryFailureReason, type CodMethod, type Client, type PricingZone, type QuoteBreakdown, type ServiceLevel, type OrdersStatsResponse, COD_METHOD_LABELS } from '@/services/api';
+import { adminApi, Pedido, HistoricoItem, type BackendDriver, type Warehouse, type DeliveryFailureReason, type CodMethod, type Client, type PricingZone, type QuoteBreakdown, type ServiceLevel, type OrdersStatsResponse, type PodImages, COD_METHOD_LABELS } from '@/services/api';
 import { printInvoice } from '@/services/invoicePrint';
 import { printLabels, type LabelData } from '@/services/labelPrint';
 import { usePreferences, densityClass } from '@/hooks/usePreferences';
@@ -182,6 +182,11 @@ export default function PedidosPage() {
   const [selectedPedido, setSelectedPedido] = useState<Pedido | null>(null);
   const [invoiceBusy, setInvoiceBusy] = useState(false);
   const [invoiceMsg, setInvoiceMsg] = useState('');
+  // Imagens do comprovativo: fora da listagem por peso (spec § 3.28), buscadas
+  // quando o detalhe abre.
+  const [podImages, setPodImages] = useState<PodImages | null>(null);
+  const [podLoading, setPodLoading] = useState(false);
+  const [podError, setPodError] = useState('');
 
   // Warehouse Shipment Modal State (spec § 8.2)
   const [warehousePedido, setWarehousePedido] = useState<Pedido | null>(null);
@@ -285,8 +290,8 @@ export default function PedidosPage() {
   const paginatedPedidos = pedidos;
 
   // A encomenda a receber é procurada NO SERVIDOR: com a listagem paginada, o
-  // código lido pode não estar na página aberta (spec § 3.1).
-  const normalizedReceiveCode = receiveTracking.trim().toUpperCase();
+  // código lido pode não estar na página aberta (spec § 3.1). A normalização do
+  // código vive no efeito que faz a procura, não aqui.
   const canReceivePedido = receivePedido?.status === 'in_transit';
   const availableWarehouses = warehouses.filter((warehouse) => warehouse.status === 'active' && !warehouse.full);
   const receiveWarehouse = warehouses.find((warehouse) => warehouse.id === receiveWarehouseId) ?? null;
@@ -325,6 +330,29 @@ export default function PedidosPage() {
     setClientResults([]);
     setClientPickerOpen(false);
   };
+
+  /**
+   * Comprovativo: só se carrega o que se vai mostrar (spec § 3.28).
+   *
+   * A listagem devolve `has_signature`/`has_photo` e nada de imagens; quando o
+   * detalhe abre e há prova, vamos buscá-la. Sem isto, cada página de 25 pedidos
+   * trazia as assinaturas e fotos de todas as entregas para desenhar uma tabela
+   * que nem imagens tem.
+   */
+  useEffect(() => {
+    const pod = selectedPedido?.pod;
+    if (!selectedPedido || !pod || (!pod.has_signature && !pod.has_photo)) {
+      setPodImages(null); setPodError('');
+      return;
+    }
+    let cancelled = false;
+    setPodLoading(true); setPodError(''); setPodImages(null);
+    adminApi.getOrderPod(selectedPedido.id)
+      .then((images) => { if (!cancelled) setPodImages(images); })
+      .catch(() => { if (!cancelled) setPodError('Não foi possível carregar o comprovativo.'); })
+      .finally(() => { if (!cancelled) setPodLoading(false); });
+    return () => { cancelled = true; };
+  }, [selectedPedido]);
 
   // Carrega as zonas de tarifação ao abrir o modal de criação (spec § 3.13).
   useEffect(() => {
@@ -1329,18 +1357,24 @@ export default function PedidosPage() {
                     <span className="font-semibold text-slate-200 mt-1 block">{trackingDate(selectedPedido.pod.captured_at).date} {trackingDate(selectedPedido.pod.captured_at).time}</span>
                   </div>
                 </div>
-                {(selectedPedido.pod.signature || selectedPedido.pod.photo) && (
+                {/* As imagens não vêm na listagem (spec § 3.28) — chegam por getOrderPod
+                    quando este modal abre, para o ecrã de pedidos não arrastar megabytes. */}
+                {(selectedPedido.pod.has_signature || selectedPedido.pod.has_photo) && (
                   <div className="flex gap-4 mt-3">
-                    {selectedPedido.pod.signature && (
+                    {podLoading && <span className="text-[11px] text-slate-500 self-center">A carregar comprovativo...</span>}
+                    {podError && <span role="alert" className="text-[11px] text-red-400 self-center">{podError}</span>}
+                    {podImages?.signature && (
                       <div>
                         <span className="block text-[10px] text-slate-500 mb-1">Assinatura</span>
-                        <img src={selectedPedido.pod.signature} alt="Assinatura do destinatário" className="h-16 rounded-lg bg-surface border border-white/10" />
+                        {/* eslint-disable-next-line @next/next/no-img-element -- A imagem é um data: URL vindo do POD — next/image não otimiza data URLs. */}
+                        <img src={podImages.signature} alt="Assinatura do destinatário" className="h-16 rounded-lg bg-surface border border-white/10" />
                       </div>
                     )}
-                    {selectedPedido.pod.photo && (
+                    {podImages?.photo && (
                       <div>
                         <span className="block text-[10px] text-slate-500 mb-1">Foto</span>
-                        <img src={selectedPedido.pod.photo} alt="Foto da entrega" className="h-16 w-16 rounded-lg object-cover border border-white/10" />
+                        {/* eslint-disable-next-line @next/next/no-img-element -- A imagem é um data: URL vindo do POD — next/image não otimiza data URLs. */}
+                        <img src={podImages.photo} alt="Foto da entrega" className="h-16 w-16 rounded-lg object-cover border border-white/10" />
                       </div>
                     )}
                   </div>
@@ -1692,6 +1726,7 @@ export default function PedidosPage() {
                     />
                     {podPhoto && (
                       <div className="mt-2 flex items-center gap-2">
+                        {/* eslint-disable-next-line @next/next/no-img-element -- A imagem é um data: URL vindo do POD — next/image não otimiza data URLs. */}
                         <img src={podPhoto} alt="Pré-visualização da foto" className="h-14 w-14 rounded-lg object-cover border border-white/10" />
                         <button type="button" onClick={() => setPodPhoto(null)} className="btn btn-ghost btn-sm">Remover</button>
                       </div>

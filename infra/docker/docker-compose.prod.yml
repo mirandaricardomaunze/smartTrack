@@ -1,4 +1,10 @@
 # ─────────────────────────────────────────────────────────────────────────────
+# PILHA PARCIAL — só portal do cliente + API. Ver infra/docker/README.md.
+#
+# A pilha de produção é a docker-compose.yml da RAIZ (com deploy/), que publica
+# também o painel administrativo e a app do motorista. Usar esta por engano dá
+# um sistema onde ninguém consegue criar um pedido nem entregar uma encomenda.
+#
 # Produção — VPS com Docker: Postgres + Backend + App do Cliente + Caddy (HTTPS).
 #
 # Uso (na raiz do repositório):
@@ -42,6 +48,11 @@ services:
       JWT_SECRET: ${JWT_SECRET}
       CORS_ORIGIN: ${CORS_ORIGIN}
       TRACK17_API_KEY: ${TRACK17_API_KEY:-}
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      EMAIL_FROM: ${EMAIL_FROM:-}
+      FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:-}
+      FIREBASE_CLIENT_EMAIL: ${FIREBASE_CLIENT_EMAIL:-}
+      FIREBASE_PRIVATE_KEY: ${FIREBASE_PRIVATE_KEY:-}
       TRACKING_POLL_ENABLED: ${TRACKING_POLL_ENABLED:-true}
     depends_on:
       postgres:

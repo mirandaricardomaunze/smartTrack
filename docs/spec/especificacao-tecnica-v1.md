@@ -141,13 +141,20 @@ listagem paginada, o código lido pode não estar na página aberta.
 
 ### 3.2 Otimização de Rotas
 - Motor de otimização de rotas (multi-parada) considerando: distância, trânsito, janelas de entrega, capacidade do veículo.
+  A **capacidade já é honrada** — não pelo otimizador, mas pelo despacho, que recusa a rota
+  antes de a montar quando a carga não cabe no veículo do motorista (§ 3.33). Trânsito e
+  janelas de entrega continuam por cobrir.
 - Reotimização dinâmica quando novo pedido entra na rota ou há atraso.
 - **Regra de negócio a definir:** ao chegar ao armazém o cliente pode "solicitar envio para determinado destino". Isso recalcula a rota em tempo real — tratar como evento assíncrono (não cadastro estático). Status intermediário: `AWAITING_DESTINATION`.
+- **Navegação no terreno:** a rota otimizada só serve de alguma coisa se o motorista a conseguir seguir. Cada paragem e o ecrã de entrega abrem a morada na aplicação de navegação do telemóvel, com as coordenadas da paragem quando existem e o texto da morada quando não — em Moçambique há bairros que a pesquisa por endereço não resolve. Não há mapa embebido: obrigaria a biblioteca, chave de API e tiles que não existem offline, e mesmo assim não daria voz nem trânsito. A aplicação que o motorista já tem instalada faz isso melhor.
 
 ### 3.3 Notificações Push
 - Notificações push segmentadas por perfil, configuráveis por tipo de evento.
 - Preferências de notificação por usuário (ligar/desligar por categoria).
-- Canal: Firebase Cloud Messaging (FCM).
+- Canal: Firebase Cloud Messaging (FCM), pela **API HTTP v1**. Simulado por default; real quando `FIREBASE_PROJECT_ID`, `FIREBASE_CLIENT_EMAIL` e `FIREBASE_PRIVATE_KEY` estiverem definidas — as três juntas, porque meia credencial falharia só em produção. O `/health` do serviço declara `fcm: simulated | live`.
+- Sem SDK `firebase-admin`: a autenticação é o fluxo JWT-bearer de service account, que o `crypto` do Node assina, e o envio é um POST. O SDK traria dezenas de MB de dependências para fazer duas chamadas, e os restantes adaptadores (email, SMS, 17TRACK) já falam HTTP directo.
+- **Limpeza de tokens mortos:** o FCM responde `UNREGISTERED`/`INVALID_ARGUMENT` (400) ou 404 quando a app foi desinstalada ou o token rodou. Só esses são devolvidos em `invalidTokens` e removidos da base. Um 429, 500 ou 503 — e qualquer falha de rede — **não** invalida o token: apagá-lo por uma indisponibilidade passageira seria perder um dispositivo bom e degradar a entrega em silêncio.
+- A API HTTP v1 não tem multicast: é um pedido por token, enviados em lotes concorrentes. Um token morto no meio do lote não impede a entrega aos restantes.
 - **Canais SMS e email:** além do push, o cliente pode ser avisado por **SMS e email** (o pedido
   guarda `client_phone`/`client_email`, capturados no cadastro). Clientes simulados por default e
   **reais quando configurados por ambiente** (`SMS_API_URL`/`SMS_API_KEY`; `EMAIL_API_URL`/
@@ -252,6 +259,7 @@ listagem paginada, o código lido pode não estar na página aberta.
 ### 3.13 Tarifação (motor de preços)
 - Preço do frete derivado de **zona de destino** (preço base + preço por kg, com peso incluído) e
   **nível de serviço** (multiplicador Normal/Expresso, configurável por ambiente). Opcional:
+  **modal de entrega** (§ 3.33 — moto mais barata que van) e
   sobretaxa de COD (% configurável). Valores em **centavos (MZN)**. Cálculo por **função pura
   `computeQuote`** (testável); o pedido guarda `weight_grams` e o detalhe `pricing` (base para a
   faturação §3.14).
@@ -379,6 +387,8 @@ guarda vive num `layout.tsx` por rota (`components/RoleGuard.tsx`) e **nunca den
 ### 3.18 Gestão de Frota e Combustível
 - **Backend (`/v1/fleet`, RBAC ADMIN):** cadastro multiempresa de viaturas com matrícula única,
   marca/modelo, ano, tipo, combustível, quilometragem, estado e datas de seguro/inspeção.
+  O tipo passa pelo catálogo de modais (§ 3.33): motociclos e mototriciclos ficam com o
+  código canónico e o combustível certo, e as estatísticas contam-nos à parte.
 - **Abastecimentos:** litros em mililitros e custos em centavos MZN, sempre associados à
   quilometragem atual. A quilometragem nunca pode regredir. Consumo entre abastecimentos completos
   é calculado por `litros / km * 100`; o primeiro abastecimento não produz consumo.
@@ -660,7 +670,21 @@ uma coisa que não aconteceu.
 - Evidências offline usam idempotency key, checksum e fila cronológica; ACK do servidor é obrigatório antes da remoção local.
 - O comprovativo PDF deve conter apenas dados permitidos e pode ser enviado automaticamente ao cliente.
 
-**Critérios de aceitação:** entrega sem evidência obrigatória é rejeitada; replay offline não duplica POD; divergência de relógio ou localização fica auditada.
+#### Captura no terreno
+
+- A aplicação do motorista **reduz** a imagem antes de a enviar, em vez de a recusar por tamanho. Uma câmara de telemóvel produz 3 a 5 MB e o data URL acrescenta ~33%; recusar deixava o motorista sem conseguir fechar a entrega, que é a única coisa que ele não pode deixar por fazer.
+- A redução baixa primeiro a qualidade e só depois a resolução — numa assinatura o que importa é o traço, não o grão. Lado maior de 1600 px, degraus de qualidade JPEG até caber no orçamento, fundo branco aplicado antes da conversão para uma assinatura PNG transparente não sair preta.
+- Só falha o que não couber no degrau mais agressivo, e nesse caso a mensagem pede outra fotografia em vez de indicar um limite que o motorista não sabe controlar.
+
+#### Onde as imagens são guardadas
+
+- A assinatura e a foto **não vivem na linha do pedido**. Ficam em `order_pod_images`, com o `order_id` como chave; `orders.pod` guarda apenas os metadados (quem recebeu, quando, coordenadas, notas) mais `has_signature` e `has_photo`.
+- Motivo: todas as leituras de pedidos fazem `SELECT *`. Com as imagens no JSONB, abrir a listagem arrastava a prova de todas as entregas da página — até centenas de MB para desenhar um ecrã que não mostra imagens — e os relatórios, com teto de 20.000 pedidos, tornavam-se inviáveis. Cada `pg_dump` levava tudo atrás.
+- As imagens leem-se sob pedido: `GET /v1/orders/:id/pod` (ADMIN/SUPPORT) e `GET /v1/orders/:code/status/pod` (público, para o portal de rastreio). Ambos confirmam primeiro a visibilidade do pedido; o endpoint de imagens nunca é o ponto onde o acesso é decidido.
+- A escrita continua a aceitar `signature`/`photo` no corpo da entrega. O que mudou é a leitura, não o contrato de quem regista.
+- Uma atualização de estado sobre um pedido já entregue **não** apaga a prova: quando o POD chega sem imagens, os sinalizadores são preservados e a tabela de imagens não é tocada.
+
+**Critérios de aceitação:** entrega sem evidência obrigatória é rejeitada; replay offline não duplica POD; divergência de relógio ou localização fica auditada; a listagem de pedidos nunca devolve bytes de imagem; uma foto de telemóvel de 4 MB é aceite depois de reduzida.
 
 ### 3.29 Planeamento operacional avançado e leitura logística
 
@@ -687,10 +711,268 @@ uma coisa que não aconteceu.
 - Permissões são definidas por ação, além do papel: valores financeiros, anulação fiscal, preço, desconto, stock, reembolso, exportação, utilizadores e salários.
 - A política da empresa pode exigir dupla aprovação para anulação, desconto, ajuste de stock, reembolso ou liquidação acima de limite configurado.
 - Solicitante e aprovador devem ser pessoas diferentes; decisões exigem motivo e são auditadas.
-- Todas as requisições recebem `correlation_id`; logs são estruturados e mascaram PII.
-- Métricas mínimas: latência, taxa de erro, jobs atrasados, fila offline, webhooks, integrações e estado do banco. Backups devem ter restauração testada.
+#### Observabilidade — o que está implementado
 
-**Critérios de aceitação:** utilizador sem permissão recebe `403`; autoaprovação é bloqueada; alertas não incluem segredos; restauração é ensaiada e registada.
+Antes disto, saber que o sistema estava mal dependia de alguém telefonar.
+
+- **Correlação.** Cada requisição recebe um id, devolvido no cabeçalho
+  `X-Request-Id` e presente na linha de log, no evento de auditoria e no erro
+  gravado. Um `X-Request-Id` vindo do cliente ou do reverse proxy é respeitado
+  desde que seja curto e inócuo — entra em ficheiros e numa coluna da base, e não
+  se deixa um cliente escolher o que lá fica. Sem correlação, investigar uma
+  queixa é procurar por hora e torcer para não haver duas.
+- **Registo estruturado** (`logger.js`): uma linha JSON por evento, sem
+  dependências novas. Segredos são removidos e PII é mascarada em profundidade —
+  remover o email tornaria o log inútil para investigar, escrevê-lo inteiro
+  deixa PII em texto limpo num ficheiro que vive anos. A lista de chaves
+  proibidas é a mesma da auditoria de propósito: duas listas seriam duas
+  hipóteses de esquecer uma.
+- **Métricas** (`GET /v1/monitoring/metrics`): contadores do processo — pedidos,
+  erros, média, máximo e p95 aproximado por rota, classes de estado e taxa de
+  erro na janela. Agregam pelo **molde** da rota (`/v1/orders/:id`) e não pelo
+  caminho concreto: agrupar por id daria uma linha por encomenda e o mapa
+  cresceria com o tráfego. Reiniciam com o processo, e isso é deliberado —
+  respondem a "como está agora"; o histórico é trabalho do agente de recolha do
+  servidor, que lê as linhas do logger.
+- **Registo central de erros** (`error_events`, `GET /v1/monitoring/errors`): só
+  o inesperado. Um 404 ou um 422 é a API a fazer o seu trabalho; contá-los como
+  avaria faria o alerta disparar com o utilizador a escrever mal um código de
+  rastreio. O cliente recebe o `correlation_id` na resposta de erro — é o que
+  transforma "deu erro" numa queixa investigável sem expor a causa a quem não
+  deve vê-la. A listagem não devolve a pilha de chamadas: caminhos de ficheiros
+  do servidor não vão para o navegador de quem consulta.
+- **Alertas** (`GET /v1/monitoring/alerts`, e avaliados também no arranque):
+  base inacessível ou lenta, taxa de erro acima do limiar, falhas de escrita na
+  auditoria ou no próprio registo de erros, e **provedores simulados em
+  produção** — a falha mais cara, porque o sistema responde "enviado" e nada sai,
+  sem erro nenhum (§ 3.24). Cada alerta traz a ação a tomar: um alerta sem ação é
+  um gráfico, e gráficos não resolvem incidentes. A taxa de erro exige uma
+  amostra mínima — 50% de dois pedidos não significa nada, e acordar alguém por
+  isso ensina a ignorar alertas.
+- **Nada disto pode partir a operação.** Como no registo de auditoria, uma falha
+  a gravar um erro é contada e engolida; o contador existe para a falha não
+  passar despercebida. O sistema que observa não pode ser a causa da
+  indisponibilidade que observa.
+- Métricas ainda em falta: jobs atrasados, profundidade da fila offline e
+  webhooks.
+
+**Critérios de aceitação:** utilizador sem permissão recebe `403`; autoaprovação é bloqueada; alertas não incluem segredos; restauração é ensaiada e registada; o id de correlação devolvido ao cliente encontra a linha do erro no registo central.
+
+---
+
+### 3.32 Contas e acessos
+
+Uma empresa tem de conseguir administrar-se sozinha. Até esta secção existir, uma
+empresa nova ficava com **uma** conta — o ADMIN criado no auto-registo — e não havia
+como criar outra pelo painel, reemitir uma senha ou cortar um acesso. Nada disto é
+funcionalidade avançada: é o mínimo para entregar o sistema a um cliente.
+
+- **Cada papel entra pela porta que garante o seu vínculo.** ADMIN e SUPPORT em
+  `/utilizadores`; **DRIVER em `/motoristas`**, porque a conta tem de ficar ligada ao
+  registo do motorista; EMPLOYEE em `/rh-contas`, ligado a `hr_employees`. Tentar criar
+  um DRIVER pela porta errada é recusado com a indicação de onde ir — o erro ensina em
+  vez de só negar.
+- **O acesso do motorista usa o id do motorista como id da conta.** A aplicação do
+  motorista resolve tudo pelo `sub` do token: `GET /v1/routes/me` chama
+  `getActiveRouteForDriver(req.user.sub)` e `PUT /v1/drivers/:id/gps` autoriza por
+  `req.params.id === req.user.sub`. Uma conta com id próprio autenticava e não
+  encontrava rota, entregas nem GPS. Antes disto só funcionava por acaso: a conta de
+  demonstração tinha o `sub` fixo a coincidir com um motorista semeado — e as contas
+  de demonstração estão desligadas em produção.
+- **Papéis de painel: apenas ADMIN e SUPPORT** — os que os endpoints honram (SUPPORT
+  em 28 deles). Não se oferece um papel que nenhuma rota reconheça: uma conta que
+  autentica e não faz nada é pior do que não existir.
+- **Reemissão de senha por um administrador**, sem pedir a senha antiga (quem chama já
+  provou ser administrador; o que protege o ato é a auditoria). Existe porque a
+  recuperação por email (§ 3.22) depende de um provedor configurado — que é opcional.
+  Sem esse caminho, uma pessoa que perde a senha fica de fora e, com um ADMIN único,
+  perde-se a empresa inteira.
+- **Suspender em vez de apagar** (`users.status`): as entregas, os documentos fiscais e
+  os eventos de auditoria continuam a apontar para a pessoa. O login recusa uma conta
+  suspensa com mensagem própria (distinta de empresa suspensa — a pessoa tem de saber a
+  quem se dirigir), e a recuperação por email também não a deixa voltar.
+- **Guardas que evitam bloqueios sem saída:** ninguém suspende a própria conta, a última
+  conta ADMIN ativa da empresa não pode ser suspensa, e um ADMIN de empresa nunca toca na
+  conta da plataforma. Todas as leituras e escritas passam pelo filtro da empresa em
+  contexto (§ 2.4): para o ADMIN da empresa A, uma conta da empresa B não existe.
+- **Registo de motoristas.** `POST /v1/drivers` passou a existir: o painel tinha um botão
+  "Adicionar Motorista" que só escrevia no estado do React e o motorista desaparecia ao
+  recarregar. O motorista nasce `offline` e sem acesso; a página mostra quantos estão sem
+  acesso, porque um motorista sem conta não executa entregas.
+- **A página de login não promete o que não pode cumprir.** `GET /v1/auth/password-recovery`
+  (pública, e fora do limitador estrito de `/v1/auth` porque é consultada a cada abertura
+  do ecrã) diz se o canal existe; sem provedor, o link dá lugar a "peça ao administrador".
+  Em produção, `POST /forgot-password` responde 503 com essa indicação em vez de dizer que
+  enviou um email que ninguém envia.
+- **Auditoria (§ 3.21).** `users.create`, `users.password_reissued`, `users.blocked`,
+  `users.reactivated`, `drivers.create` e `drivers.access_granted`. As senhas nunca entram
+  no registo, nem em claro nem em hash — há um teste que falha se aparecerem.
+- **API.** `GET/POST /v1/users` · `PUT /v1/users/:id/password` · `PUT /v1/users/:id/status`
+  (ADMIN; leitura e escrita de senha/estado também SUPERADMIN) · `POST /v1/drivers` ·
+  `POST /v1/drivers/:id/access` (ADMIN) · `GET /v1/auth/password-recovery` (pública).
+- **Migração.** `infrastructure/migrations/user-access.js` (aditiva e idempotente) +
+  `migrate-user-access.js` em `migrate-all.js`. As colunas são também garantidas no
+  `ensureTable` do arranque, porque o login lê `status` em todas as autenticações.
+- **Testes.** 14 unitários das decisões puras (política da senha emitida, quem administra
+  quem, portas de cada papel) e 29 de integração contra PostgreSQL, incluindo o percurso
+  completo que uma empresa real faz: registar motorista → criar acesso → autenticar e
+  confirmar que o `sub` do token é o id do motorista. Dados em
+  `tests/harness/factories/user-access.factory.ts`.
+
+**Critérios de aceitação:** uma empresa com uma só conta consegue criar a segunda sem
+suporte; um motorista registado no painel consegue entrar na aplicação e ver a sua rota;
+uma conta suspensa não entra nem por senha nem por recuperação; nenhuma empresa fica sem
+administrador ativo; e o painel nunca oferece um caminho de recuperação que não funciona.
+
+---
+
+### 3.33 Entregas de motociclo e mototriciclo
+
+O motociclista e o mototriciclista são a última milha em Moçambique — a moto para a
+encomenda pequena, o triciclo de carga para o que já não cabe nela e ainda não justifica
+uma carrinha. O sistema tratava-os como um rótulo: o cadastro de motoristas tinha uma
+lista fechada `MOTO/CARRO/VAN/CAMINHAO` **sem mototriciclo**, a frota (§ 3.18) tinha o
+tipo em texto livre, e nenhum dos dois sabia quanto é que o veículo carrega. Daí saíam
+três problemas reais: o mototriciclo não se cadastrava, a tarifa era a mesma para uma moto
+e para um camião, e o § 3.2 pedia rotas que respeitassem "capacidade do veículo" sem que
+nada a verificasse — 200 kg atribuídos a uma moto só se descobriam no armazém.
+
+- **Catálogo de modais como fonte única** (`domain/delivery-modals.js`, puro). Por modal:
+  capacidade (kg), volume (L), maior lado admissível (cm), categorias de carta,
+  combustível por default, número de rodas e multiplicador de tarifa. Os cinco modais são
+  **motociclo (25 kg)**, **mototriciclo (350 kg)**, carro (400 kg), van (1500 kg) e camião
+  (8000 kg). Os limites são o que a operação aceita despachar, não o máximo teórico.
+- **O vocabulário da operação é aceite e normalizado.** "mota", "motorizada", "triciclo",
+  "txopela", "moto-triciclo", com ou sem acentos e maiúsculas, resolvem para o código
+  canónico — recusar estas palavras não torna o cadastro mais correto, só empurra quem
+  cadastra a escolher o modal errado para poder avançar. O que fica gravado é sempre o
+  código.
+- **A capacidade declarada nunca ultrapassa o teto do modal.** O cadastro pode declarar
+  menos (um baú pequeno numa moto); escrever 500 kg numa moto é reduzido a 25 kg. Sem este
+  teto, o cadastro anulava a verificação do despacho.
+- **A carta tem de habilitar o modal.** Motociclo exige categoria A; mototriciclo aceita A
+  ou B. Sem categoria declarada assume-se a principal do modal — o cadastro não fica
+  bloqueado por um dado que nem sempre está à mão, mas o que se grava é coerente.
+- **Despacho recusa a rota que o veículo não leva** (`application/dispatch.service.js`,
+  em `POST /v1/routes` e no `reoptimize`). Duas verificações, porque falham por razões
+  diferentes: um volume isolado maior que o veículo (nunca cabe, nem sozinho) e a soma das
+  paradas acima da capacidade (cabe repartido, não de uma vez). No reoptimize contam as
+  paradas **pendentes** mais as novas — o que já foi entregue saiu do veículo. A resposta
+  é 422 com o motivo e o modal sugerido. **Pedido sem peso registado não é bloqueado**: o
+  sistema não inventa um peso para depois recusar a operação com ele; devolve a contagem
+  em `unknown_weight` e deixa a decisão a quem despacha. O serviço recusa e explica — não
+  reparte a carga nem escolhe o veículo.
+- **Tarifa por modal (§ 3.13).** `vehicle_modal` é opcional em `POST /v1/pricing/quote`;
+  ausente, o preço é exatamente o de antes (`modal_cents: 0`). Presente, aplica-se um
+  multiplicador sobre base+peso — 0,7 na moto, 0,85 no mototriciclo, 1 no carro, 1,3 na
+  van, 1,8 no camião — sobreponível por ambiente (`PRICING_MODAL_MOTO_MULTIPLIER`). Um
+  modal que não existe é erro 400, não ausência: ignorá-lo em silêncio devolvia o preço de
+  carro a quem pediu moto. **Um peso que não cabe no modal pedido não recusa o orçamento**
+  — devolve o preço com `modal_fits: false`, o motivo e `suggested_modal`, porque a
+  pergunta "quanto custa de moto?" merece resposta mesmo quando a resposta é "não cabe".
+- **Frota (§ 3.18).** `vehicle_type` passa pelo catálogo: reconhecido vira código canónico,
+  não reconhecido é preservado como estava (a coluna sempre foi texto livre e já tem
+  `pickup` gravado — recusá-lo agora partia cadastros que funcionavam). Motos e triciclos
+  assumem gasolina, senão o default `diesel` do formulário comparava consumos com o
+  combustível errado. As estatísticas ganham contagem por modal e o total de duas/três
+  rodas, agregados em SQL.
+- **Painel.** `/motoristas` e `/frota` escolhem o modal a partir de `GET /v1/fleet/modals`
+  e mostram capacidade e carta exigida; `/tarifas` simula por modal e avisa quando o peso
+  não cabe; `/rotas` distingue MT (mototriciclo) de M (motociclo). Nenhum ecrã repete a
+  tabela de capacidades — se o catálogo não chegar, cai numa lista de reserva e continua a
+  funcionar.
+- **API.** `GET /v1/fleet/modals` (autenticado, não só ADMIN: é vocabulário, não dados da
+  empresa, e a tarifação é ADMIN/SUPPORT). `POST /v1/drivers` aceita
+  `vehicle.licence_category`. `POST /v1/pricing/quote` aceita `vehicle_modal`.
+- **Sem migração.** O veículo do motorista é JSONB e `fleet_vehicles.vehicle_type` já
+  existia; só mudou o que lá é escrito.
+- **Testes.** 25 unitários do catálogo (normalização, tetos, cargas no limite e um grama
+  acima, cartas) e 16 de integração contra PostgreSQL: mototriciclo cadastrado com o
+  código canónico, capacidade reduzida ao teto, rota recusada por volume isolado e por
+  soma, a mesma carga aceite no triciclo, peso desconhecido que não bloqueia, e tarifa de
+  moto abaixo da de van. Dados em `tests/harness/factories/delivery-modal.factory.ts`.
+
+**Critérios de aceitação:** um mototriciclista cadastra-se e recebe rotas; uma rota com
+carga acima do que o veículo leva é recusada antes de sair do painel, com o modal
+sugerido; o mesmo pedido custa menos de moto do que de van; um pedido sem peso registado
+nunca é bloqueado por causa disso; e nenhum ecrã do painel tem a tabela de capacidades
+escrita à mão.
+
+---
+
+### 3.34 Prontidão de produção
+
+Esta secção não acrescenta funcionalidade nenhuma. Existe porque um sistema
+completo em funcionalidades pode continuar a não ser entregável, e cada ponto
+abaixo saiu de uma verificação que **falhou** — não de uma lista de boas
+práticas.
+
+**A compilação de produção não pode depender da internet.** Os frontends iam
+buscar a fonte a `fonts.googleapis.com` durante o `next build` (via
+`next/font/google`) e, em execução, também o CSS e os marcadores do mapa a um
+CDN. Enquanto houve rede na máquina de quem compilava, ninguém reparou; a
+compilação partia dentro de um `docker build` sem saída para fora, e o cliente
+atrás de uma firewall corporativa via o painel sem tipo de letra e o mapa sem
+marcadores. Os ficheiros passam a ser servidos pela própria aplicação. Único
+recurso externo aceite: as *tiles* do mapa — um mapa sem servidor de tiles não é
+um mapa. Guardado por sonda no harness (`external-assets.ts`), que lê o
+código-fonte e reprova qualquer host novo.
+
+**As três aplicações web têm ESLint, e o CI corre-o.** Não por estilo: as regras
+que interessam apanham dependências em falta em `useEffect` (a causa de um ecrã
+que mostra os dados do pedido anterior) e atribuições ao identificador `module`
+(que parte o *chunk* do empacotador). Código morto fica a cargo de
+`noUnusedLocals` no TypeScript, que entende posições de tipo — o `no-unused-vars`
+do ESLint não entende e marcaria `import type` como não usado.
+
+**O percurso operacional é testado ponta a ponta, sem estados semeados a meio.**
+Criar → recolher → despachar → transportar → sair para entrega → entregar →
+apresentar a prova, cada estado sendo o resultado do passo anterior. Um teste por
+troço parte de uma encomenda já no estado de que precisa e por isso esconde as
+juntas — foi numa junta que apareceu o defeito descrito a seguir. O condutor do
+percurso vive no harness (`DeliveryJourney`) e recebe os módulos por injeção,
+para servir tanto a base real como um duplo.
+
+**Despachar é atribuir.** Criar a rota gravava as paradas com o `order_id` e
+deixava o pedido sem `driver_id` e sem `route_id`. O painel mostrava a rota
+montada e, na prática, o motorista continuava sem a encomenda: `PUT
+/v1/orders/:id/status` recusava-o (o guard de dono compara `order.driver_id` com
+o `sub` do token), `POST /v1/driver-sync/events` devolvia 403 ao lote inteiro, a
+listagem filtrada por motorista vinha vazia e o COD cobrado nunca entrava no
+acerto de caixa. Só um ADMIN conseguia mover a encomenda, o que anula a
+aplicação do motorista. A atribuição corre depois de a rota estar criada — a
+rota é o facto que a autoriza — e vale também para as paradas acrescentadas numa
+reotimização. Paradas que a base recusa atribuir (pedido inexistente, já entregue
+ou cancelado) vêm identificadas na resposta: quem despacha tem de saber que a
+parada está na rota e a encomenda não vai ser levada.
+
+**O `/health` toca na base.** Respondia `{status:'ok'}` sem consultar nada, ou
+seja, respondia `ok` com o PostgreSQL em baixo — e o balanceador continuava a
+mandar tráfego para um processo incapaz de servir uma página. Devolve 503 quando
+a base não responde, que é o contrato que o balanceador e o `HEALTHCHECK` do
+Docker percebem. Fica sem autenticação e por isso não revela mais nada: o
+diagnóstico vive em `/v1/monitoring`, atrás de ADMIN.
+
+**A implantação publica o sistema inteiro.** A app do motorista não era
+construída nem servida por nenhuma pilha de deploy — com o percurso acima
+testado e a funcionar, a operação real continuava a depender de alguém o fazer à
+mão pelo painel. Passa a ter serviço, domínio próprio (uma PWA fica presa à
+origem onde é servida) e entrada no `CORS_ORIGIN`; sem essa entrada a app abre e
+não carrega nada, sem mensagem que o explique. Existem duas pilhas no
+repositório e a de `infra/docker/` é parcial: fica assinalada como tal, para que
+segui-la por engano não produza um sistema sem painel e sem motorista.
+
+**A migração de raiz é verificada contra uma base vazia.** `migrate-all
+--reset-core` numa base nova tem de produzir exatamente o mesmo esquema da base
+em uso. Um módulo cujo *script* de migração não entre na lista não dá erro
+nenhum — dá páginas a responder 500 num cliente novo, semanas depois.
+
+**Critérios de aceitação:** `npm run build` conclui sem acesso à rede;
+`npm run lint` e `npm run typecheck` passam nos três frontends; a suíte completa
+passa contra PostgreSQL real; o percurso ponta a ponta passa sem estados
+semeados; uma base vazia migrada iguala a base em uso; `npm run backup:verify`
+conclui o ensaio de restauro; e um `docker compose up` publica API, painel,
+portal do cliente e app do motorista.
 
 ---
 
@@ -716,6 +998,16 @@ mecanismo não se limita a copiar.
   **descartável**, compara as contagens com o manifesto, **revalida as cadeias de hash** dos documentos
   fiscais (§ 3.19) e da auditoria (§ 3.21), e apaga a base de ensaio. Um restauro que traz as linhas
   mas parte a cadeia não é defensável numa inspeção — daí a verificação ir até aí.
+- **O ensaio compara origem com restauro, e não só o restauro.** Uma cadeia partida na origem é
+  copiada fielmente: o restauro fez o seu trabalho, e reprovar a cópia por isso manda o operador
+  procurar no sítio errado. Pior — a partir da primeira quebra, **todas** as cópias seguintes
+  reprovariam para sempre, e um controlo permanentemente vermelho deixa de ser lido. Reprova a cópia
+  a cadeia que estava íntegra na origem e chega partida ao restauro; a que já vinha partida sai como
+  **aviso nomeado** (qual empresa, qual série), porque continua a ser um alarme sério — só que do
+  histórico, não da cópia. Sem conseguir ler a origem, o ensaio volta ao critério estrito: um ensaio
+  que não sabe comparar não pode ser permissivo. A regra (`compareChains`) é pura e tem testes
+  próprios, incluindo o caso que a permissividade podia esconder — uma regressão real ao lado de uma
+  quebra antiga.
 - **Restauro** (`npm run restore -- <ficheiro> --into=base`): recusa-se a escrever sobre a base em uso
   sem `--force` explícito, e verifica o SHA-256 antes de destruir o que existe.
 - **Regra**: uma cópia só conta depois de restaurada com sucesso. O ensaio deve correr agendado, não
@@ -810,6 +1102,27 @@ interface Pedido {
   atualizado_em: Date;
 }
 
+// ComprovativoEntrega — metadados guardados no pedido (§ 3.28).
+// As imagens NÃO estão aqui: pesam megabytes e sairiam em cada `SELECT *`.
+interface ComprovativoEntrega {
+  method: 'signature' | 'photo' | 'signature_photo';
+  recipient_name: string;
+  has_signature: boolean;                   // há prova guardada?
+  has_photo: boolean;
+  notes?: string;
+  coords?: GeoPoint;
+  captured_by?: string;
+  captured_at: Date;
+}
+
+// ImagensComprovativo — tabela à parte, lida só no detalhe (§ 3.28).
+interface ImagensComprovativo {
+  pedido_id: string;                        // chave primária
+  assinatura?: string;                      // data URL
+  foto?: string;                            // data URL
+  atualizado_em: Date;
+}
+
 // EventoRastreio — imutável
 interface EventoRastreio {
   id: string;
@@ -822,6 +1135,15 @@ interface EventoRastreio {
   device_id?: string;                       // app motorista
   device_timestamp?: Date;                  // para sync offline
   timestamp: Date;                          // UTC, imutável
+}
+
+// Veiculo — o modal é o vocabulário partilhado por cadastro, frota,
+// tarifação e despacho (§ 3.33). MOTO e MOTOTRICICLO são a última milha.
+interface Veiculo {
+  tipo: 'MOTO' | 'MOTOTRICICLO' | 'CARRO' | 'VAN' | 'CAMINHAO';
+  matricula: string;
+  capacidade_kg: number;                    // nunca acima do teto do modal
+  categoria_carta?: 'A' | 'B' | 'C';        // tem de habilitar o modal
 }
 
 // Motorista
@@ -942,25 +1264,61 @@ Ver `.agents/skills/payment-idempotency/SKILL.md`.
 - [x] Tarifação, COD, acertos, suporte, subscrições e rastreio internacional com adaptadores
 - [x] Painel administrativo e portais web separados por API HTTP
 
-### Fase P0 — prontidão para produção
-- [ ] Remover dados fictícios das telas operacionais e tornar falhas explícitas
-- [ ] Implementar painel de saúde das integrações e bloquear simuladores em produção
-- [ ] Ativar provedores reais de pagamento, SMS, email, push, mapas e rastreio
-- [ ] Reforçar permissões por ação, dupla aprovação, observabilidade, backups e restauração
-- [ ] Cobrir fluxos críticos com testes E2E e testes de isolamento multiempresa
+### Prioridade 1 — finalizar e estabilizar (§ 3.34)
 
-### Fase P1 — experiência e controlo operacional
-- [ ] Portal autenticado completo do cliente
-- [ ] Centro de ocorrências com SLA, evidências e escalonamento
-- [ ] Logística reversa com nota de crédito/reembolso idempotente
-- [ ] POD reforçado por política, geofence e comprovativo automático
-- [ ] Cadeia de leitura e manifesto de carga do armazém à entrega
+Nada de novo entra enquanto isto não estiver fechado. Concluído:
 
-### Fase P2 — eficiência e gestão
-- [ ] Otimização com capacidade, janelas, turnos, trânsito e replaneamento
-- [ ] Dashboard de exceções acionáveis e indicadores operacionais
-- [ ] Rentabilidade por entrega, rota, cliente, zona e armazém
-- [ ] Relatórios automáticos e exportações com RBAC
+- [x] Build de produção sem dependência da rede (fonte e recursos do mapa auto-hospedados; sonda no harness a impedir a regressão)
+- [x] ESLint configurado e a passar nos três frontends, com o CI a executá-lo
+- [x] Suíte completa a passar contra PostgreSQL real (unitários + integração)
+- [x] Percurso ponta a ponta: criar → recolher → despachar → transportar → entregar → apresentar a prova
+- [x] Despacho a atribuir a encomenda ao motorista (o defeito que o percurso revelou)
+- [x] Migração de raiz verificada contra base vazia; cópia, ensaio de restauro e retenção executados
+- [x] App do motorista publicada pela implantação; pilha de deploy parcial assinalada
+- [x] Correlação, registo estruturado com PII mascarada, métricas, registo central de erros e alertas acionáveis (§ 3.31)
+- [ ] Métricas em falta: jobs atrasados, profundidade da fila offline e webhooks
+
+### Prioridade 2 — operação logística completa
+
+O que já existe está marcado; o que falta é o que a operação real ainda pede.
+
+- [x] Clientes, tarifação por peso/volume/distância/zona, recolha, expedição e entrega
+- [x] Armazéns e movimentos; etiquetas e leitura de códigos (§ 3.15)
+- [x] Planeamento de rotas e verificação de carga no despacho (§ 3.2, § 3.33)
+- [x] Rastreio GPS dos motoristas; POD com foto, assinatura, nome, localização e data (§ 3.28)
+- [x] Insucesso, pagamento na entrega e reconciliação de caixa (§ 3.5)
+- [x] Manutenção, combustível e documentos da frota (§ 3.18)
+- [x] Portal do cliente e app do motorista com funcionamento offline (§ 3.6, § 3.25)
+- [ ] Contratos por cliente (condições comerciais acordadas, não só o cadastro)
+- [ ] Inventário e transferência entre filiais
+- [ ] Reagendamento e devoluções como fluxo próprio (§ 3.26, § 3.27)
+- [ ] Despacho automático (a atribuição é manual)
+- [ ] SMS, WhatsApp, email e push com provedores reais — hoje simulados fora do email
+
+### Prioridade 3 — controlo empresarial
+
+- [x] Faturação, recibos, impostos e conformidade fiscal (§ 3.14, § 3.19)
+- [x] Controlo de caixa dos motoristas (§ 3.5)
+- [x] Gestão de utilizadores, funções e permissões (§ 3.32)
+- [x] Auditoria de todas as operações (§ 3.21)
+- [x] Multiempresa (§ 2.4)
+- [x] Relatórios exportáveis em PDF e CSV (§ 3.17, § 3.20)
+- [x] Contas a receber e a pagar como lançamentos com vencimento e saldo (§ 3.17)
+- [ ] Dashboard operacional em tempo real
+- [ ] Custos e rentabilidade por pedido, rota, cliente e viatura (§ 3.30)
+- [ ] Contas a receber **por cliente**, ligadas às faturas — hoje o lançamento é avulso
+- [ ] SLA e ocorrências (§ 3.26)
+- [ ] Desempenho dos motoristas a partir de dados reais (§ 3.7 — hoje o motorista nasce com 100% de pontualidade e sucesso, valores que nunca são recalculados a partir das entregas)
+- [ ] Exportação para Excel (o CSV abre no Excel, mas não leva formatação nem várias folhas)
+- [ ] Multifilial
+
+### Prioridade 4 — diferenciais avançados
+
+Só depois de a operação estar estável.
+
+- [ ] Previsão do horário de entrega
+- [ ] Otimização inteligente de rotas (capacidade, janelas, turnos, trânsito, replaneamento)
+- [ ] Deteção de atrasos e desvios
 
 ---
 

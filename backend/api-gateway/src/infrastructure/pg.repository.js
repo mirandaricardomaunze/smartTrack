@@ -11,7 +11,28 @@
 'use strict';
 
 const pool = require('./db');
-const { readCompanyId, writeCompanyId } = require('./tenant-context');
+const { readCompanyId, writeCompanyId, readBranchScope } = require('./tenant-context');
+
+/**
+ * Âmbito de filial na consulta de pedidos (spec § 3.45).
+ *
+ * Em SQL e não em JavaScript: a lista é paginada (§ 3.1), e filtrar depois de
+ * paginar devolveria páginas com menos linhas do que o pedido e uma contagem que
+ * não bate certo com o que se vê.
+ *
+ * A encomenda entra pelo OU: a filial de ORIGEM ou o armazém onde está AGORA.
+ * Sem isso, uma transferência a caminho ficaria invisível à base que a recebe.
+ */
+function branchClause(params, alias = '') {
+  const branches = readBranchScope();
+  if (!branches) return '';
+
+  const p = alias ? `${alias}.` : '';
+  params.push(branches);
+  const i = params.length;
+  return ` AND (${p}branch_id = ANY($${i}) OR ${p}warehouse_id = ANY($${i})`
+    + ` OR (${p}branch_id IS NULL AND ${p}warehouse_id IS NULL))`;
+}
 
 // ─── Multiempresa (spec § 2.4) ────────────────────────────────────────────────
 // `readCompanyId()` devolve a empresa a filtrar (ou undefined = sem filtro:
@@ -59,6 +80,9 @@ function rowToOrder(row) {
     driver_id:       row.driver_id ?? undefined,
     route_id:        row.route_id ?? undefined,
     warehouse_id:    row.warehouse_id ?? undefined,
+    // Filial de ORIGEM (§ 3.45) — `null` explícito e não `undefined`: "não se
+    // sabe por onde entrou" é uma resposta, e some do JSON se for undefined.
+    branch_id:       row.branch_id ?? null,
     pod:             row.pod ?? undefined,
     delivery_otp:    row.delivery_otp ?? undefined,
     cod_amount:      row.cod_amount ?? 0,
@@ -216,6 +240,10 @@ const OrderRepository = {
     if (opts.status) { params.push(opts.status); clauses.push(`current_status = $${params.length}`); }
     if (opts.driver_id) { params.push(opts.driver_id); clauses.push(`driver_id = $${params.length}`); }
     if (opts.warehouse_id) { params.push(opts.warehouse_id); clauses.push(`warehouse_id = $${params.length}`); }
+    // Filial de ORIGEM (§ 3.45): responde a "o que entrou por esta base", que é
+    // outra pergunta — e outra resposta — do que `warehouse_id`, "o que está
+    // agora nela".
+    if (opts.branch_id) { params.push(opts.branch_id); clauses.push(`branch_id = $${params.length}`); }
     if (opts.cod_status) { params.push(opts.cod_status); clauses.push(`cod_status = $${params.length}`); }
     if (opts.from) { params.push(opts.from); clauses.push(`created_at >= $${params.length}`); }
     if (opts.to) { params.push(opts.to); clauses.push(`created_at < $${params.length}`); }
@@ -224,7 +252,12 @@ const OrderRepository = {
       const p = `$${params.length}`;
       clauses.push(`(lower(tracking_code) LIKE ${p} OR lower(client_id) LIKE ${p} OR lower(coalesce(destination->>'city','')) LIKE ${p})`);
     }
-    const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+    let where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+
+    // O âmbito de filial entra depois dos filtros do ecrã: é uma restrição, não
+    // uma escolha de quem consulta, e por isso não pode ser removida por eles.
+    const filial = branchClause(params);
+    if (filial) where = where ? `${where}${filial}` : `WHERE TRUE${filial}`;
 
     const total = Number((await pool.query(`SELECT COUNT(*) AS total FROM orders ${where}`, params)).rows[0].total);
     const limit = Math.min(Math.max(Number(opts.limit) || 25, 1), 200);
@@ -272,8 +305,11 @@ const OrderRepository = {
    */
   async findById(id, executor = pool) {
     const params = [id];
+    // O âmbito de filial também aqui: sem isto, bastaria escrever o id na barra
+    // de endereço para abrir — e alterar — uma encomenda de outra base. Uma
+    // lista filtrada com detalhe aberto não é uma lente, é uma ilusão.
     const { rows } = await executor.query(
-      `SELECT * FROM orders WHERE id = $1${companyClause(params)} LIMIT 1`,
+      `SELECT * FROM orders WHERE id = $1${companyClause(params)}${branchClause(params)} LIMIT 1`,
       params,
     );
     return rows.length ? rowToOrder(rows[0]) : undefined;
@@ -470,8 +506,8 @@ async function insertOrder(executor, order, podMeta) {
         origin, destination, carrier_intl_id, driver_id, route_id, warehouse_id,
         pod, delivery_otp, cod_amount, cod_status, cod, cod_settlement_id,
         value, history, created_at, updated_at, client_ref_id, weight_grams, pricing, company_id,
-        delivery_attempts, next_attempt_on, return_info
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29)
+        delivery_attempts, next_attempt_on, return_info, branch_id
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30)
       RETURNING *
     `, [
     order.id,
@@ -503,8 +539,25 @@ async function insertOrder(executor, order, podMeta) {
     order.delivery_attempts ?? 0,
     order.next_attempt_on ?? null,
     order.return_info ? JSON.stringify(order.return_info) : null,
+    // Filial de ORIGEM (spec § 3.45), fixada aqui e nunca mais alterada:
+    // `warehouse_id` continua a dizer onde a mercadoria está agora. Quem tem uma
+    // só filial atribuída regista por ela; quem vê a empresa toda não escolhe
+    // filial nenhuma, e a encomenda fica sem origem em vez de com uma inventada.
+    order.branch_id ?? defaultBranchId(),
   ]);
   return rowToOrder(rows[0]);
+}
+
+/**
+ * Filial a atribuir a um registo novo.
+ *
+ * SÓ QUANDO NÃO HÁ DÚVIDA: com duas ou mais filiais no âmbito, escolher a
+ * primeira atribuiria receita à base errada — e uma atribuição errada é pior do
+ * que nenhuma, porque tem o aspeto de um facto.
+ */
+function defaultBranchId() {
+  const branches = readBranchScope();
+  return branches && branches.length === 1 ? branches[0] : null;
 }
 
 /**

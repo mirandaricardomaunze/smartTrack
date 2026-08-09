@@ -46,6 +46,8 @@ npm run typecheck
 | Documento | Caminho |
 |---|---|
 | Especificação técnica | [`docs/spec/especificacao-tecnica-v1.md`](docs/spec/especificacao-tecnica-v1.md) |
+| Idioma e nomenclatura do código | [`docs/spec/code-language-policy.md`](docs/spec/code-language-policy.md) |
+| Plano de migração da nomenclatura | [`docs/spec/code-language-migration-plan.md`](docs/spec/code-language-migration-plan.md) |
 | Decisão do monólito modular | [`docs/adr/ADR-004-modular-monolith.md`](docs/adr/ADR-004-modular-monolith.md) |
 | Backend e módulos | [`backend/README.md`](backend/README.md) |
 | Regras para agentes | [`.agents/AGENTS.md`](.agents/AGENTS.md) |

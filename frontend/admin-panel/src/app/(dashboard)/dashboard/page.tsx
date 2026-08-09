@@ -7,8 +7,8 @@
  * Spec ref: docs/spec/especificacao-tecnica-v1.md § 3.4 (Painel Administrativo)
  *
  * Fontes de dados (todas via api-gateway):
- *   GET /v1/orders         — lista de pedidos (adminApi.getPedidos)
- *   GET /v1/drivers        — frota (adminApi.getMotoristas)
+ *   GET /v1/orders         — lista de pedidos (adminApi.getOrders)
+ *   GET /v1/drivers        — frota (adminApi.getDrivers)
  *
  * Os agregados (KPIs, distribuição por status, receita) são derivados no cliente
  * a partir dessas duas listas — não há endpoint de agregação dedicado ainda.
@@ -116,8 +116,8 @@ export default function DashboardPage() {
 
       // Independentes — não bloquear um pelo outro (mesmo padrão de useSidebarStats)
       const [pedidosResult, motoristasResult, resumoResult] = await Promise.allSettled([
-        adminApi.getPedidos(),
-        adminApi.getMotoristas(),
+        adminApi.getOrders(),
+        adminApi.getDrivers(),
         // Os indicadores vêm contados da base, sobre a empresa inteira (§ 3.39).
         // As listas abaixo continuam a ser uma página — servem para MOSTRAR
         // linhas recentes, não para contar.

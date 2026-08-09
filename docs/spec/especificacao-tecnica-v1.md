@@ -1629,6 +1629,60 @@ produz um ficheiro válido com cabeçalhos.
 
 ---
 
+### 3.45 Operação multifilial
+
+Uma transportadora com bases em Maputo, Beira e Nampula tem um problema que a
+multiempresa (§ 2.4) não resolve: é **uma** empresa, e o responsável da Beira
+não quer percorrer as encomendas de Maputo para encontrar as suas.
+
+**A filial é o armazém.** Uma tabela `branches` nova teria nome, morada, GPS e
+código — exatamente o que `warehouses` já tem — e as duas ficariam a divergir à
+primeira base criada só num dos sítios. O que falta não é uma entidade; é o
+**âmbito**: quem vê o quê, e como se lê a operação repartida por base.
+
+**A filial NÃO é uma fronteira de segurança.** A fronteira é a empresa
+(`company_id`), imposta em SQL em todas as leituras. O âmbito de filial é uma
+lente sobre os dados da própria empresa, e há-de sempre existir quem veja tudo.
+Dizê-lo aqui evita que alguém use a atribuição de filiais para esconder dados
+sensíveis de um colega e seja apanhado de surpresa.
+
+**Um utilizador sem filiais atribuídas vê a empresa inteira.** É o contrário do
+que a intuição sugere, e é deliberado: no dia da migração ninguém tem filiais
+atribuídas, e exigir atribuição trancaria toda a gente fora do sistema de uma
+vez. Quem opera numa só base — a esmagadora maioria — nunca precisa de tocar
+nisto.
+
+**Origem e localização são coisas diferentes.** Uma encomenda entra por uma
+filial (`branch_id`, que nunca muda: é a quem pertence a receita e a
+responsabilidade) e está fisicamente noutra à medida que viaja
+(`warehouse_id`, que já existe e já muda com as transferências do § 3.36). Um
+utilizador da Beira vê a encomenda **se a origem for a sua filial OU se ela
+estiver agora no seu armazém**. Sem esse OU, uma transferência a caminho seria
+invisível precisamente à base que a tem de receber.
+
+**Encomendas sem filial são visíveis a todos.** As que existem antes desta
+migração não têm origem registada, e o armazém onde estão hoje não é a filial
+por onde entraram — deduzi-la seria inventar um facto que o sistema nunca
+guardou. Ficam a `NULL`, e `NULL` não desaparece de vista.
+
+- **Backend:** `user_branches` (utilizador ↔ armazém, muitos-para-muitos — um
+  responsável regional cobre mais do que uma base); `branch_id` em `orders`,
+  `drivers` e `fleet_vehicles`. O âmbito é lido da base a cada pedido e não do
+  token: gravado no token, retirar uma filial a alguém só faria efeito no
+  próximo início de sessão, e uma restrição que demora horas a aplicar-se não é
+  uma restrição.
+- **Frontend admin:** atribuição de filiais na ficha do utilizador; filtro de
+  filial na lista de encomendas; repartição por filial no painel operacional.
+  Sem emojis.
+
+**Critérios de aceitação:** um utilizador restrito à Beira não vê encomendas de
+Maputo, mas vê as que vêm a caminho do seu armazém; um utilizador sem atribuição
+continua a ver tudo; encomendas sem filial nunca desaparecem; retirar uma filial
+faz efeito no pedido seguinte, sem novo início de sessão; e o âmbito de filial
+nunca deixa passar dados de outra empresa.
+
+---
+
 ## 4. Requisitos Não Funcionais
 
 ### Cópias de segurança e restauro
@@ -1966,7 +2020,7 @@ O que já existe está marcado; o que falta é o que a operação real ainda ped
 - [x] SLA de entrega com prazo acordado por zona e ocorrências com dono, prazo e histórico imutável (§ 3.42, implementa o § 3.26)
 - [x] Desempenho dos motoristas medido das encomendas, com `null` onde não há amostra e sem a avaliação de cliente que nunca foi recolhida (§ 3.43, implementa o § 3.7)
 - [x] Exportação para Excel com escritor próprio de `.xlsx`: várias folhas por livro, valores em meticais que somam sem reformatação, e a ressalva de custos a viajar dentro do ficheiro (§ 3.44)
-- [ ] Multifilial
+- [x] Operação multifilial: a filial é o armazém, âmbito por utilizador lido da base a cada pedido, origem distinta da localização atual, e repartição da operação por base (§ 3.45)
 
 ### Prioridade 4 — diferenciais avançados
 

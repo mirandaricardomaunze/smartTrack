@@ -44,6 +44,9 @@ const moduleMigrations = [
   ['RH — horário/turno do colaborador', 'api-gateway/src/infrastructure/migrate-hr-schedule.js'],
   ['finanças', 'api-gateway/scripts/migrate-finance.js'],
   ['frota', 'api-gateway/scripts/migrate-fleet.js'],
+  // Depois da frota: acrescenta `branch_id` a `fleet_vehicles`, que só existe
+  // a partir daí.
+  ['âmbito de filial', 'api-gateway/src/infrastructure/migrate-branches.js'],
   ['sincronização', 'orders-service/src/infrastructure/migrate.js'],
   ['rotas', 'routes-service/src/infrastructure/migrate.js'],
   // Depois de `rotas` e de `drivers`: o backfill da empresa vem do motorista.

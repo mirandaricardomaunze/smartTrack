@@ -6,7 +6,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { adminApi, Pedido, HistoricoItem, type BackendDriver, type Warehouse, type DeliveryFailureReason, type CodMethod, type Client, type PricingZone, type QuoteBreakdown, type ServiceLevel, type OrdersStatsResponse, type PodImages, type ReturnReason, COD_METHOD_LABELS, RETURN_REASON_LABELS } from '@/services/api';
+import { adminApi, Pedido, HistoricoItem, type BackendDriver, type Warehouse, type DeliveryFailureReason, type CodMethod, type Client, type PricingZone, type QuoteBreakdown, type ServiceLevel, type OrdersStatsResponse, type PodImages, type ReturnReason, type Branch, COD_METHOD_LABELS, RETURN_REASON_LABELS } from '@/services/api';
 import { printInvoice } from '@/services/invoicePrint';
 import { printLabels, type LabelData } from '@/services/labelPrint';
 import { usePreferences, densityClass } from '@/hooks/usePreferences';
@@ -140,6 +140,11 @@ export default function PedidosPage() {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
+  // Filial de ORIGEM (spec § 3.45). Só aparece a quem tem mais do que uma base:
+  // um seletor com uma única opção é ruído, e a quem está restrito a uma filial
+  // o backend já filtra — o seletor não lhe daria escolha nenhuma.
+  const [branchFilter, setBranchFilter] = useState('all');
+  const [branches, setBranches] = useState<Branch[]>([]);
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [error, setError] = useState('');
@@ -234,13 +239,14 @@ export default function PedidosPage() {
       setLoading(true);
       setError('');
       const [ordersPage, driversData] = await Promise.all([
-        adminApi.getPedidosPage({
+        adminApi.getOrdersPage({
           page: currentPage,
           pageSize,
           status: statusFilter === 'all' ? undefined : statusFilter,
+          branch_id: branchFilter === 'all' ? undefined : branchFilter,
           search: searchTerm.trim() || undefined,
         }),
-        adminApi.getMotoristas(),
+        adminApi.getDrivers(),
       ]);
       setPedidos(ordersPage.items);
       setTotalPedidos(ordersPage.total);
@@ -251,6 +257,9 @@ export default function PedidosPage() {
       } catch {
         setWarehouses([]);
       }
+      // Falha em silêncio: sem filiais o ecrã fica exatamente como estava, e a
+      // lista de encomendas não depende disto para funcionar.
+      adminApi.getFiliais().then((r) => setBranches(r.branches)).catch(() => setBranches([]));
     } catch (err) {
       setError('Erro ao carregar dados do servidor. Exibindo dados locais de contingência.');
       setPedidos([
@@ -274,13 +283,13 @@ export default function PedidosPage() {
     const timer = setTimeout(() => { void loadData(); }, searchTerm ? 300 : 0);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentPage, pageSize, statusFilter, searchTerm]);
+  }, [currentPage, pageSize, statusFilter, branchFilter, searchTerm]);
   // Procura a encomenda do código lido diretamente no servidor.
   useEffect(() => {
     const code = receiveTracking.trim().toUpperCase();
     if (!code) { setReceivePedido(null); return undefined; }
     const timer = setTimeout(() => {
-      adminApi.getPedidosPage({ search: code, pageSize: 5 })
+      adminApi.getOrdersPage({ search: code, pageSize: 5 })
         .then((r) => setReceivePedido(r.items.find((o) => o.trackingCode.toUpperCase() === code) ?? null))
         .catch(() => setReceivePedido(null));
     }, 300);
@@ -454,7 +463,7 @@ export default function PedidosPage() {
     setModalError('');
 
     try {
-      await adminApi.createPedido({
+      await adminApi.createOrder({
         trackingCode: newOrderTracking,
         client: newOrderClient,
         destination: newOrderDestino,
@@ -941,6 +950,22 @@ export default function PedidosPage() {
               ...Object.entries(STATUS_LABELS).map(([value, meta]) => ({ value, label: meta.label })),
             ]}
           />
+
+          {branches.length > 1 && (
+            <Select
+              aria-label="Filtrar por filial de origem"
+              containerClassName="md:w-52"
+              value={branchFilter}
+              onChange={(event) => {
+                setBranchFilter(event.target.value);
+                setCurrentPage(1);
+              }}
+              options={[
+                { value: 'all', label: 'Todas as filiais' },
+                ...branches.map((b) => ({ value: b.id, label: b.name })),
+              ]}
+            />
+          )}
 
           <Button
             variant="secondary"
@@ -1445,7 +1470,7 @@ export default function PedidosPage() {
                       onChange={(e: React.ChangeEvent<HTMLInputElement>) => setReagendarData(e.target.value)} />
                   </div>
                   <button type="button" disabled={!reagendarData || redeliveryBusy}
-                    onClick={() => acaoRedelivery(() => adminApi.reagendarEntrega(selectedPedido.id, reagendarData))}
+                    onClick={() => acaoRedelivery(() => adminApi.rescheduleDelivery(selectedPedido.id, reagendarData))}
                     className="text-xs font-semibold px-3 py-2 rounded-lg bg-brand-600 text-white hover:bg-brand-500 disabled:opacity-50 transition-colors">
                     Reagendar
                   </button>

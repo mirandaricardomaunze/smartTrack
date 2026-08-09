@@ -196,6 +196,7 @@ async function listOrders(opts = {}) {
     search: opts.search,
     driver_id: opts.driver_id,
     warehouse_id: opts.warehouse_id,
+    branch_id: opts.branch_id,
     cod_status: opts.cod_status,
     from: opts.from,
     to: opts.to,

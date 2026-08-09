@@ -51,6 +51,7 @@ const profitabilityRouter = require('./api/profitability.router');
 const receivablesRouter = require('./api/receivables.router');
 const incidentsRouter = require('./api/incidents.router');
 const exportsRouter = require('./api/exports.router');
+const branchesRouter = require('./api/branches.router');
 const slaRouter = require('./api/sla.router');
 const authRouter = require('./api/auth.router');
 const usersRouter = require('./api/users.router');
@@ -74,7 +75,8 @@ const { isSimulated: trackingSimulated } = require('../../tracking-intl-service/
 const { syncDriverEvents, MissingRequiredFieldError } = require('./application/orders.service');
 const { rateLimit } = require('./infrastructure/rate-limit');
 const { requireAuth, requireRoles, requireBodySubjectOrRoles, verifyToken } = require('./application/auth.service');
-const { runWithContext } = require('./infrastructure/tenant-context');
+const { runWithContext, setBranchScope } = require('./infrastructure/tenant-context');
+const { getUserBranches } = require('./application/branches.service');
 const { auditRequests, getHealth: auditHealth } = require('./application/audit.service');
 const { logger } = require('./infrastructure/logger');
 const monitoring = require('./application/monitoring.service');
@@ -126,12 +128,14 @@ const authLimiter = rateLimit({
 // é o que permite seguir um pedido desde o navegador até à linha do servidor.
 app.use((req, res, next) => {
   let companyId = null;
+  let userId = null;
   const header = req.headers.authorization;
   if (header && header.startsWith('Bearer ')) {
     try {
       const payload = verifyToken(header.slice(7));
       if (!payload.exp || payload.exp >= Math.floor(Date.now() / 1000)) {
         companyId = payload.company_id ?? null;
+        userId = payload.sub ?? null;
       }
     } catch { /* token inválido/expirado — contexto sem empresa */ }
   }
@@ -145,7 +149,26 @@ app.use((req, res, next) => {
   req.correlationId = correlationId;
   res.setHeader('X-Request-Id', correlationId);
 
-  runWithContext({ companyId, correlationId }, () => next());
+  runWithContext({ companyId, correlationId }, async () => {
+    // Âmbito de filial (spec § 3.45). Lido da BASE e não do token: gravado no
+    // token, retirar uma filial a alguém só faria efeito no próximo início de
+    // sessão, e uma restrição que demora horas a aplicar-se não é uma restrição.
+    //
+    // FALHA ABERTO. A filial não é a fronteira de segurança — essa é a empresa,
+    // imposta em SQL — e uma base indisponível a meio do dia trancaria a
+    // operação inteira para poupar uma lente que a maioria das empresas, com uma
+    // só base, nem usa.
+    if (userId && companyId) {
+      try {
+        setBranchScope(await getUserBranches(userId));
+      } catch (err) {
+        logger.warn('Âmbito de filial não resolvido; o pedido segue sem restrição', {
+          user_id: userId, err: err.message,
+        });
+      }
+    }
+    next();
+  });
 });
 
 // ─── Métricas por requisição (spec § 3.31) ────────────────────────────────────
@@ -200,6 +223,7 @@ app.use('/v1/profitability', profitabilityRouter);
 app.use('/v1/receivables', receivablesRouter);
 app.use('/v1/incidents', incidentsRouter);
 app.use('/v1/exports', exportsRouter);
+app.use('/v1/branches', branchesRouter);
 app.use('/v1/sla', slaRouter);
 app.use('/v1/pricing', pricingRouter);
 app.use('/v1/invoices', invoicesRouter);

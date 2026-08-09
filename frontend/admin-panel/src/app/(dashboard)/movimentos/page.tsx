@@ -83,8 +83,8 @@ export default function MovimentosPage() {
     setError('');
     try {
       const [ordersData, driversData] = await Promise.all([
-        adminApi.getPedidos(),
-        adminApi.getMotoristas(),
+        adminApi.getOrders(),
+        adminApi.getDrivers(),
       ]);
       setOrders(ordersData);
       setDrivers(driversData);

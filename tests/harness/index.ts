@@ -60,9 +60,17 @@ export { OperationsFactory } from './factories/operations.factory';
 export { ProfitabilityFactory } from './factories/profitability.factory';
 export { ReceivablesFactory, HOJE as RECEIVABLES_TODAY } from './factories/receivables.factory';
 export { ExportFactory } from './factories/export.factory';
+export { BranchFactory, BRANCHES } from './factories/branch.factory';
+export type { TestScopedOrder } from './factories/branch.factory';
 export { SlaFactory, AGORA as SLA_NOW } from './factories/sla.factory';
 export type { TestPerformanceOrder } from './factories/driver-performance.factory';
 export { DriverPerformanceFactory } from './factories/driver-performance.factory';
+export { NamingPolicyFactory } from './factories/naming-policy.factory';
+export type { NamingPolicyScenario } from './factories/naming-policy.factory';
+
+// Políticas de código
+export { CodeLanguagePolicy } from './code-language-policy';
+export type { LanguagePolicyResult, LanguagePolicyFinding } from './code-language-policy';
 
 // Percursos (conduzem vários módulos pela ordem da operação, não geram dados)
 export { DeliveryJourney } from './journeys/delivery-journey';

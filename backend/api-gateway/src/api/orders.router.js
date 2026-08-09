@@ -111,6 +111,7 @@ router.get('/', requireAuth, requireRoles(['ADMIN', 'SUPPORT']), async (req, res
       search: req.query.search,
       driver_id: req.query.driver_id,
       warehouse_id: req.query.warehouse_id,
+      branch_id: req.query.branch_id,
       cod_status: req.query.cod_status,
       from: req.query.from,
       to: req.query.to,

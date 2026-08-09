@@ -150,7 +150,7 @@ export default function ArmazensPage() {
       setError('');
       const [list, statsData] = await Promise.all([
         adminApi.getArmazens(),
-        adminApi.getArmazemStats().catch(() => null),
+        adminApi.getWarehouseStats().catch(() => null),
       ]);
       setWarehouses(list);
       setStats(statsData);
@@ -171,8 +171,8 @@ export default function ArmazensPage() {
     setDetailLoading(true);
     try {
       const [orders, movements] = await Promise.all([
-        adminApi.getArmazemOrders(id),
-        adminApi.getArmazemMovements(id).catch(() => []),
+        adminApi.getWarehouseOrders(id),
+        adminApi.getWarehouseMovements(id).catch(() => []),
       ]);
       setDetailOrders(orders);
       setDetailMovements(movements);
@@ -247,9 +247,9 @@ export default function ArmazensPage() {
     };
     try {
       if (editing) {
-        await adminApi.updateArmazem(editing.id, payload);
+        await adminApi.updateWarehouse(editing.id, payload);
       } else {
-        await adminApi.createArmazem(payload);
+        await adminApi.createWarehouse(payload);
       }
       setIsFormOpen(false);
       await loadData();
@@ -263,7 +263,7 @@ export default function ArmazensPage() {
   const handleDeactivate = async (w: Warehouse) => {
     if (!window.confirm(`Desativar o armazém "${w.name}"? Só é possível se estiver vazio.`)) return;
     try {
-      await adminApi.deactivateArmazem(w.id);
+      await adminApi.deactivateWarehouse(w.id);
       await loadData();
       if (selected?.id === w.id) setSelected(null);
     } catch (err) {

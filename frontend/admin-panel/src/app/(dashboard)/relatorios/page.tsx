@@ -16,6 +16,7 @@ import { useCompanyProfile } from '@/hooks/useCompanyProfile';
 import { exportReportPdf } from '@/services/documentPdf';
 import { Button, Card, PageHeader, StatCard } from '@/components/ui';
 import Rentabilidade from '@/components/Rentabilidade';
+import RepartimentoPorFilial from '@/components/RepartimentoPorFilial';
 
 // Paleta categórica validada (CVD-safe no fundo escuro) — ordem fixa.
 const C_CREATED = '#6366f1';
@@ -251,6 +252,10 @@ export default function RelatoriosPage() {
       {/* Rentabilidade (§ 3.40). Antes dos gráficos de volume: quanto sobra
           decide mais do que quantas entregas se fizeram. */}
       <Rentabilidade />
+
+      {/* Repartição por filial (§ 3.45). Só aparece a quem opera em mais do que
+          uma base — para as restantes seria uma linha a repetir o total. */}
+      <RepartimentoPorFilial days={days} />
 
       {loading || !ov ? (
         <div className="p-12 text-center text-slate-500">A carregar relatórios...</div>

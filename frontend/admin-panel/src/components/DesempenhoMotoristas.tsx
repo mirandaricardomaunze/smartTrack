@@ -37,7 +37,7 @@ export default function DesempenhoMotoristas() {
     setLoading(true);
     setErro('');
     try {
-      setLinhas((await adminApi.getDesempenhoMotoristas()).drivers);
+      setLinhas((await adminApi.getDriverPerformance()).drivers);
     } catch (e) {
       setErro(e instanceof Error ? e.message : 'Não foi possível carregar o desempenho.');
     } finally {

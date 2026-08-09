@@ -17,8 +17,8 @@
  *
  * Fontes de dados:
  *   GET /v1/routes    — rotas otimizadas (adminApi.getRotas)
- *   GET /v1/drivers   — frota + posição GPS (adminApi.getMotoristas)
- *   GET /v1/orders    — pedidos, para enriquecer as paradas (adminApi.getPedidos)
+ *   GET /v1/drivers   — frota + posição GPS (adminApi.getDrivers)
+ *   GET /v1/orders    — pedidos, para enriquecer as paradas (adminApi.getOrders)
  */
 
 import React, { useState, useEffect } from 'react';
@@ -260,8 +260,8 @@ export default function RotasPage() {
       setError('');
 
       const [pedidosResult, motoristasResult, rotasResult] = await Promise.allSettled([
-        adminApi.getPedidos(),
-        adminApi.getMotoristas(),
+        adminApi.getOrders(),
+        adminApi.getDrivers(),
         adminApi.getRotas(),
       ]);
 

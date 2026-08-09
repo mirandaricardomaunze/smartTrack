@@ -1060,6 +1060,35 @@ export interface DispatchPlan {
 /** Relatórios que o backend sabe exportar em Excel (spec § 3.44). */
 export type ExcelReport = 'rentabilidade' | 'contas-a-receber' | 'desempenho' | 'ocorrencias';
 
+/** Uma filial — que é um armazém (spec § 3.45). */
+export interface Branch {
+  id: string;
+  code: string;
+  name: string;
+  address?: Record<string, unknown>;
+}
+
+/**
+ * Âmbito de filial de um utilizador.
+ *
+ * `restricted: false` com `branches: []` significa **vê a empresa inteira**, e
+ * não "não vê nada" — o ecrã não pode tratar a lista vazia como ausência.
+ */
+export interface UserBranchScope {
+  user_id: string;
+  branches: string[];
+  restricted: boolean;
+}
+
+export interface BranchBreakdownRow {
+  branch_id: string | null;
+  branch_name: string;
+  total: number;
+  delivered: number;
+  failed: number;
+  revenue_cents: number;
+}
+
 /**
  * NÃO tem `customer_rating`: nunca existiu recolha de avaliações no sistema, e
  * os 5,0 que o cadastro mostrava eram inventados.
@@ -1813,6 +1842,8 @@ export interface OrderListParams {
   search?: string;
   driver_id?: string;
   warehouse_id?: string;
+  /** Filial de ORIGEM — o que entrou por esta base (spec § 3.45). */
+  branch_id?: string;
   cod_status?: string;
   from?: string;
   to?: string;
@@ -1860,7 +1891,7 @@ export const adminApi = {
    * É o que a listagem deve usar: sem isto, uma empresa com dezenas de milhares
    * de pedidos descarregava tudo para o browser a cada abertura da página.
    */
-  getPedidosPage: async (params: OrderListParams = {}): Promise<OrderListResult> => {
+  getOrdersPage: async (params: OrderListParams = {}): Promise<OrderListResult> => {
     const q = new URLSearchParams();
     for (const [key, value] of Object.entries(params)) if (value) q.set(key, String(value));
     const qs = q.toString();
@@ -1875,10 +1906,15 @@ export const adminApi = {
    * acertos) e ainda não paginam. Traz uma fatia recente com teto explícito —
    * limitado, mas honesto: melhor do que fingir que traz tudo.
    */
-  getPedidos: async (params: OrderListParams = {}): Promise<Order[]> => {
-    const page = await adminApi.getPedidosPage({ pageSize: 200, ...params });
+  getOrders: async (params: OrderListParams = {}): Promise<Order[]> => {
+    const page = await adminApi.getOrdersPage({ pageSize: 200, ...params });
     return page.items;
   },
+
+  /** @deprecated Use `getOrdersPage`. */
+  getPedidosPage: (params: OrderListParams = {}): Promise<OrderListResult> => adminApi.getOrdersPage(params),
+  /** @deprecated Use `getOrders`. */
+  getPedidos: (params: OrderListParams = {}): Promise<Order[]> => adminApi.getOrders(params),
 
   getOrdersStats: (): Promise<OrdersStatsResponse> => fetchApi<OrdersStatsResponse>('/orders/stats'),
 
@@ -1903,8 +1939,12 @@ export const adminApi = {
   getRentabilidadeRotas: (): Promise<{ routes: RouteProfit[]; cost_coverage: CostCoverage }> =>
     fetchApi('/profitability/routes'),
 
-  getRentabilidadeViaturas: (): Promise<{ vehicles: VehicleProfit[]; cost_coverage: CostCoverage }> =>
+  getVehicleProfitability: (): Promise<{ vehicles: VehicleProfit[]; cost_coverage: CostCoverage }> =>
     fetchApi('/profitability/vehicles'),
+
+  /** @deprecated Use `getVehicleProfitability`. */
+  getRentabilidadeViaturas: (): Promise<{ vehicles: VehicleProfit[]; cost_coverage: CostCoverage }> =>
+    adminApi.getVehicleProfitability(),
 
   // ─── Contas a receber (spec § 3.41) ─────────────────────────────────────────
 
@@ -1921,11 +1961,16 @@ export const adminApi = {
   // Calculado das encomendas. O cadastro tinha valores fixos que nunca eram
   // recalculados — não são usados.
 
-  getDesempenhoMotoristas: (): Promise<{ drivers: DriverPerformance[] }> =>
+  getDriverPerformance: (): Promise<{ drivers: DriverPerformance[] }> =>
     fetchApi('/drivers/performance'),
 
-  getDesempenhoMotorista: (id: string): Promise<DriverPerformance> =>
+  getDriverPerformanceById: (id: string): Promise<DriverPerformance> =>
     fetchApi(`/drivers/${encodeURIComponent(id)}/performance`),
+
+  /** @deprecated Use `getDriverPerformance`. */
+  getDesempenhoMotoristas: (): Promise<{ drivers: DriverPerformance[] }> => adminApi.getDriverPerformance(),
+  /** @deprecated Use `getDriverPerformanceById`. */
+  getDesempenhoMotorista: (id: string): Promise<DriverPerformance> => adminApi.getDriverPerformanceById(id),
 
   getOcorrencias: (status?: string): Promise<Occurrence[]> =>
     fetchApi(`/incidents${status ? `?status=${encodeURIComponent(status)}` : ''}`),
@@ -1941,7 +1986,7 @@ export const adminApi = {
   getOcorrenciaHistorico: (id: string): Promise<OccurrenceEvent[]> =>
     fetchApi(`/incidents/${id}/history`),
   
-  createPedido: async (order: CreateOrderData): Promise<Order> => {
+  createOrder: async (order: CreateOrderData): Promise<Order> => {
     const payload = {
       tracking_code: order.trackingCode,
       client: order.client,
@@ -1979,6 +2024,9 @@ export const adminApi = {
     });
     return mapBackendOrderToOrder(raw);
   },
+
+  /** @deprecated Use `createOrder`. */
+  createPedido: (order: CreateOrderData): Promise<Order> => adminApi.createOrder(order),
 
   /** Spec § 8.2, passo 4 — coloca o pedido em espera do destino do cliente. */
   holdForDestination: async (id: string, warehouseLocation: string): Promise<Order> => {
@@ -2035,13 +2083,17 @@ export const adminApi = {
 
   // ─── Reagendamento e devolução ao remetente (spec § 3.37) ───────────────────
 
-  reagendarEntrega: async (id: string, scheduledFor: string, notes?: string): Promise<Order> => {
+  rescheduleDelivery: async (id: string, scheduledFor: string, notes?: string): Promise<Order> => {
     const raw = await fetchApi<BackendOrder>(`/orders/${id}/reschedule`, {
       method: 'POST',
       body: JSON.stringify({ scheduled_for: scheduledFor, notes }),
     });
     return mapBackendOrderToOrder(raw);
   },
+
+  /** @deprecated Use `rescheduleDelivery`. */
+  reagendarEntrega: (id: string, scheduledFor: string, notes?: string): Promise<Order> =>
+    adminApi.rescheduleDelivery(id, scheduledFor, notes),
 
   iniciarDevolucao: async (id: string, reason: ReturnReason, notes?: string): Promise<Order> => {
     const raw = await fetchApi<BackendOrder>(`/orders/${id}/return`, {
@@ -2081,13 +2133,22 @@ export const adminApi = {
       body: JSON.stringify({ received_cash_cents: receivedCashCents, notes }),
     }),
 
-  getMotoristas: (): Promise<BackendDriver[]> => fetchApi<BackendDriver[]>('/drivers'),
+  getDrivers: (): Promise<BackendDriver[]> => fetchApi<BackendDriver[]>('/drivers'),
+
+  /** @deprecated Use `getDrivers`. */
+  getMotoristas: (): Promise<BackendDriver[]> => adminApi.getDrivers(),
 
   /** Registra um motorista. O acesso à aplicação cria-se depois, à parte. */
-  createMotorista: (data: {
+  createDriver: (data: {
     name: string; phone?: string; email?: string;
     vehicle: { type: DeliveryModalCode; plate: string; capacity_kg?: number; licence_category?: string };
   }): Promise<BackendDriver> => fetchApi<BackendDriver>('/drivers', { method: 'POST', body: JSON.stringify(data) }),
+
+  /** @deprecated Use `createDriver`. */
+  createMotorista: (data: {
+    name: string; phone?: string; email?: string;
+    vehicle: { type: DeliveryModalCode; plate: string; capacity_kg?: number; licence_category?: string };
+  }): Promise<BackendDriver> => adminApi.createDriver(data),
 
   // ── Contas e acessos (spec § 3.32) ────────────────────────────────────────
 
@@ -2516,6 +2577,19 @@ export const adminApi = {
     window.setTimeout(() => URL.revokeObjectURL(url), 5000);
   },
 
+  // ─── Filiais (spec § 3.45) ─────────────────────────────────────────────────
+
+  getFiliais: (): Promise<{ branches: Branch[] }> => fetchApi('/branches'),
+
+  getFiliaisDoUtilizador: (userId: string): Promise<UserBranchScope> =>
+    fetchApi(`/branches/users/${userId}`),
+
+  setFiliaisDoUtilizador: (userId: string, branches: string[]): Promise<UserBranchScope> =>
+    fetchApi(`/branches/users/${userId}`, { method: 'PUT', body: JSON.stringify({ branches }) }),
+
+  getRepartimentoPorFilial: (days = 30): Promise<{ days: number; branches: BranchBreakdownRow[] }> =>
+    fetchApi(`/branches/breakdown?days=${days}`),
+
   // ─── Armazéns (gestão dinâmica) ────────────────────────────────────────────
 
   getArmazens: async (): Promise<Warehouse[]> => {
@@ -2523,9 +2597,12 @@ export const adminApi = {
     return raw.map(mapBackendWarehouse);
   },
 
-  getArmazemStats: (): Promise<WarehouseStats> => fetchApi<WarehouseStats>('/warehouses/stats'),
+  getWarehouseStats: (): Promise<WarehouseStats> => fetchApi<WarehouseStats>('/warehouses/stats'),
 
-  createArmazem: async (data: CreateWarehouseData): Promise<Warehouse> => {
+  /** @deprecated Use `getWarehouseStats`. */
+  getArmazemStats: (): Promise<WarehouseStats> => adminApi.getWarehouseStats(),
+
+  createWarehouse: async (data: CreateWarehouseData): Promise<Warehouse> => {
     const raw = await fetchApi<BackendWarehouse>('/warehouses', {
       method: 'POST',
       body: JSON.stringify(data),
@@ -2533,7 +2610,10 @@ export const adminApi = {
     return mapBackendWarehouse(raw);
   },
 
-  updateArmazem: async (id: string, data: UpdateWarehouseData): Promise<Warehouse> => {
+  /** @deprecated Use `createWarehouse`. */
+  createArmazem: (data: CreateWarehouseData): Promise<Warehouse> => adminApi.createWarehouse(data),
+
+  updateWarehouse: async (id: string, data: UpdateWarehouseData): Promise<Warehouse> => {
     const raw = await fetchApi<BackendWarehouse>(`/warehouses/${id}`, {
       method: 'PUT',
       body: JSON.stringify(data),
@@ -2541,22 +2621,34 @@ export const adminApi = {
     return mapBackendWarehouse(raw);
   },
 
-  deactivateArmazem: async (id: string): Promise<Warehouse> => {
+  /** @deprecated Use `updateWarehouse`. */
+  updateArmazem: (id: string, data: UpdateWarehouseData): Promise<Warehouse> => adminApi.updateWarehouse(id, data),
+
+  deactivateWarehouse: async (id: string): Promise<Warehouse> => {
     const raw = await fetchApi<BackendWarehouse>(`/warehouses/${id}`, { method: 'DELETE' });
     return mapBackendWarehouse(raw);
   },
 
+  /** @deprecated Use `deactivateWarehouse`. */
+  deactivateArmazem: (id: string): Promise<Warehouse> => adminApi.deactivateWarehouse(id),
+
   /** Encomendas atualmente dentro do armazém (entrada ainda não expedida). */
-  getArmazemOrders: async (id: string): Promise<Order[]> => {
+  getWarehouseOrders: async (id: string): Promise<Order[]> => {
     const raw = await fetchApi<BackendOrder[]>(`/warehouses/${id}/orders`);
     return raw.map(mapBackendOrderToOrder);
   },
 
+  /** @deprecated Use `getWarehouseOrders`. */
+  getArmazemOrders: (id: string): Promise<Order[]> => adminApi.getWarehouseOrders(id),
+
   /** Histórico auditável de movimentos (entrada/envio) do armazém. */
-  getArmazemMovements: async (id: string): Promise<WarehouseMovement[]> => {
+  getWarehouseMovements: async (id: string): Promise<WarehouseMovement[]> => {
     const raw = await fetchApi<BackendWarehouseMovement[]>(`/warehouses/${id}/movements`);
     return raw.map(mapBackendMovement);
   },
+
+  /** @deprecated Use `getWarehouseMovements`. */
+  getArmazemMovements: (id: string): Promise<WarehouseMovement[]> => adminApi.getWarehouseMovements(id),
 
   /** Entrada: regista a receção física de uma encomenda no armazém. */
   // ─── Inventário e transferências entre filiais (spec § 3.36) ────────────────

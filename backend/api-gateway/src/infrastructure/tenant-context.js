@@ -62,6 +62,33 @@ function getCorrelationId() {
 }
 
 /**
+ * Fixa o âmbito de filial da requisição em curso (spec § 3.45).
+ *
+ * ESCRITO DEPOIS DO `run()` e não como argumento dele: as filiais são lidas da
+ * base de dados, o que só pode acontecer já dentro do contexto. O armazém é um
+ * objeto criado por requisição — mutá-lo não atravessa requisições.
+ *
+ * PORQUÊ AQUI E NÃO NUM SEGUNDO ALS: pela mesma razão que o id de correlação —
+ * bastaria alguém trocar a ordem dos dois `run()` para o contexto de dentro
+ * perder o de fora.
+ *
+ * @param {string[]|null} branches lista vazia ou null = sem restrição
+ */
+function setBranchScope(branches) {
+  const store = als.getStore();
+  if (store) store.branches = Array.isArray(branches) && branches.length ? branches : null;
+}
+
+/**
+ * Âmbito de filial da requisição.
+ * @returns {string[]|null} null = vê a empresa inteira
+ */
+function readBranchScope() {
+  const store = als.getStore();
+  return store?.branches ?? null;
+}
+
+/**
  * Empresa do contexto atual.
  * @returns {string|null|undefined} string (empresa), null (sem empresa), undefined (sem contexto)
  */
@@ -91,6 +118,8 @@ module.exports = {
   runWithContext,
   getCompanyId,
   getCorrelationId,
+  setBranchScope,
+  readBranchScope,
   writeCompanyId,
   readCompanyId,
   DEFAULT_COMPANY_ID,

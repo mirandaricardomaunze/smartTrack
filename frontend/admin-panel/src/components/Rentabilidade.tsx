@@ -67,7 +67,7 @@ export default function Rentabilidade() {
         setRotas(r.routes);
         setCobertura(r.cost_coverage);
       } else {
-        const r = await adminApi.getRentabilidadeViaturas();
+        const r = await adminApi.getVehicleProfitability();
         setViaturas(r.vehicles);
         setCobertura(r.cost_coverage);
       }

@@ -105,7 +105,7 @@ export default function MotoristasPage() {
     try {
       setLoading(true);
       setError('');
-      setMotoristas((await adminApi.getMotoristas()).map(toRow));
+      setMotoristas((await adminApi.getDrivers()).map(toRow));
     } catch (err) {
       // Sem dados de contingência (§ 3.24): mostra-se o erro e a ação de retentar.
       setError(err instanceof Error ? err.message : 'Erro ao carregar motoristas.');
@@ -154,7 +154,7 @@ export default function MotoristasPage() {
     setError('');
     setSuccess('');
     try {
-      const created = await adminApi.createMotorista({
+      const created = await adminApi.createDriver({
         name: newDriver.name,
         email: newDriver.email,
         phone: newDriver.phone || undefined,

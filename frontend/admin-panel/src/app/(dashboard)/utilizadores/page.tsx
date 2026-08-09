@@ -17,6 +17,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { adminApi, type AccessAccount, type AccountRole, type PanelRole } from '@/services/api';
 import { Button, Card, DataTable, Input, PageHeader, Select, type DataTableColumn } from '@/components/ui';
+import FiliaisDoUtilizador from '@/components/FiliaisDoUtilizador';
 
 /** Rótulo e cor de cada papel. Sem emojis — só texto e cor (regra do projeto). */
 const ROLE_LABEL: Record<AccountRole, { label: string; className: string }> = {
@@ -45,6 +46,7 @@ export default function UsersPage() {
   const [success, setSuccess] = useState('');
   /** Conta cuja senha está a ser reemitida (id) e a senha escrita. */
   const [reissuing, setReissuing] = useState<{ id: string; password: string } | null>(null);
+  const [filiaisDe, setFiliaisDe] = useState<AccessAccount | null>(null);
   const [busyId, setBusyId] = useState('');
 
   const load = useCallback(async () => {
@@ -161,6 +163,14 @@ export default function UsersPage() {
         const lastAdmin = account.role === 'ADMIN' && account.status === 'active' && activeAdmins <= 1;
         return (
           <div className="flex justify-end gap-2">
+            {/* Reparte a vista da operação por base (spec § 3.45). Não se
+                oferece a motoristas: quem entrega vê as suas encomendas, não uma
+                filial. */}
+            {account.role !== 'DRIVER' && (
+              <Button size="sm" variant="ghost" onClick={() => setFiliaisDe(account)}>
+                Filiais
+              </Button>
+            )}
             <Button
               size="sm"
               variant="secondary"
@@ -239,6 +249,14 @@ export default function UsersPage() {
           </div>
         </form>
       </Card>
+
+      {filiaisDe && (
+        <FiliaisDoUtilizador
+          userId={filiaisDe.id}
+          userName={filiaisDe.name}
+          onClose={() => setFiliaisDe(null)}
+        />
+      )}
 
       {reissuing && (
         <Card>

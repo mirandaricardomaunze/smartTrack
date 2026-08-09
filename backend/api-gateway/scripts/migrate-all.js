@@ -26,6 +26,7 @@ const moduleMigrations = [
   // Ambas acrescentam colunas a tabelas do núcleo, por isso correm depois dele.
   ['tarifação por volume e distância', 'api-gateway/src/infrastructure/migrate-pricing-dimensions.js'],
   ['contratos de cliente', 'api-gateway/src/infrastructure/migrate-contracts.js'],
+  ['transferências e contagens de armazém', 'api-gateway/src/infrastructure/migrate-warehouse-inventory.js'],
   // Tem de correr depois de a tabela `orders` existir: lê o POD de lá e move as
   // imagens para `order_pod_images`.
   ['imagens do comprovativo de entrega', 'api-gateway/src/infrastructure/migrate-pod-images.js'],

@@ -2028,6 +2028,236 @@ const InvoiceRepository = {
   },
 };
 
+// ─── TransferRepository / CountRepository ─────────────────────────────────────
+// Transferências entre filiais e contagens de inventário (spec § 3.36).
+
+/** @param {object} row @returns {object} */
+function rowToTransfer(row) {
+  return {
+    id:             row.id,
+    code:           row.code,
+    origin_id:      row.origin_id,
+    destination_id: row.destination_id,
+    status:         row.status,
+    notes:          row.notes ?? null,
+    dispatched_at:  row.dispatched_at ? isoOf(row.dispatched_at) : null,
+    dispatched_by:  row.dispatched_by ?? null,
+    received_at:    row.received_at ? isoOf(row.received_at) : null,
+    received_by:    row.received_by ?? null,
+    created_at:     isoOf(row.created_at),
+    updated_at:     isoOf(row.updated_at),
+    items:          [],
+  };
+}
+
+const TransferRepository = {
+  /**
+   * Cria a transferência e o manifesto numa transação.
+   *
+   * Uma transferência sem itens não é meia transferência — é uma linha órfã que
+   * alguém vai despachar sem carga. Por isso os dois numa transação só.
+   *
+   * @param {object} transfer
+   * @param {object[]} items
+   */
+  async create(transfer, items) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const { rows } = await client.query(`
+        INSERT INTO warehouse_transfers (
+          id, company_id, code, origin_id, destination_id, status, notes, created_at, updated_at
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+        RETURNING *
+      `, [
+        transfer.id, transfer.company_id ?? writeCompanyId(), transfer.code,
+        transfer.origin_id, transfer.destination_id, transfer.status,
+        transfer.notes ?? null, transfer.created_at, transfer.updated_at,
+      ]);
+
+      for (const item of items) {
+        await client.query(`
+          INSERT INTO warehouse_transfer_items (id, transfer_id, order_id, tracking_code, status)
+          VALUES ($1,$2,$3,$4,$5)
+        `, [item.id, transfer.id, item.order_id, item.tracking_code ?? null, item.status]);
+      }
+
+      await client.query('COMMIT');
+      return { ...rowToTransfer(rows[0]), items };
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+  },
+
+  async findById(id) {
+    const params = [id];
+    const { rows } = await pool.query(
+      `SELECT * FROM warehouse_transfers WHERE id = $1${companyClause(params)} LIMIT 1`,
+      params,
+    );
+    if (rows.length === 0) return undefined;
+
+    const { rows: itens } = await pool.query(
+      'SELECT * FROM warehouse_transfer_items WHERE transfer_id = $1 ORDER BY created_at',
+      [id],
+    );
+    return { ...rowToTransfer(rows[0]), items: itens };
+  },
+
+  /** @param {{ warehouse_id?: string, status?: string }} [opts] */
+  async list(opts = {}) {
+    const params = [];
+    const clauses = [];
+    if (opts.warehouse_id) {
+      // Um armazém vê o que sai E o que entra: são as duas pontas do mesmo
+      // problema, e obrigar a duas consultas escondia metade.
+      params.push(opts.warehouse_id);
+      clauses.push(`(origin_id = $${params.length} OR destination_id = $${params.length})`);
+    }
+    if (opts.status) { params.push(opts.status); clauses.push(`status = $${params.length}`); }
+
+    const cid = readCompanyId();
+    if (cid) { params.push(cid); clauses.push(`company_id = $${params.length}`); }
+
+    const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+    const { rows } = await pool.query(
+      `SELECT * FROM warehouse_transfers ${where} ORDER BY created_at DESC LIMIT 200`,
+      params,
+    );
+    return rows.map(rowToTransfer);
+  },
+
+  async update(id, patch) {
+    const sets = [];
+    const params = [];
+    const col = (name, value) => { params.push(value); sets.push(`${name} = $${params.length}`); };
+    for (const campo of ['status', 'notes', 'dispatched_at', 'dispatched_by', 'received_at', 'received_by', 'updated_at']) {
+      if (patch[campo] !== undefined) col(campo, patch[campo]);
+    }
+    if (sets.length === 0) return TransferRepository.findById(id);
+
+    params.push(id);
+    const { rows } = await pool.query(
+      `UPDATE warehouse_transfers SET ${sets.join(', ')} WHERE id = $${params.length}${companyClause(params)} RETURNING *`,
+      params,
+    );
+    if (rows.length === 0) return undefined;
+
+    const { rows: itens } = await pool.query(
+      'SELECT * FROM warehouse_transfer_items WHERE transfer_id = $1 ORDER BY created_at',
+      [id],
+    );
+    return { ...rowToTransfer(rows[0]), items: itens };
+  },
+
+  async updateItemStatus(itemId, status) {
+    await pool.query(
+      'UPDATE warehouse_transfer_items SET status = $1, updated_at = NOW() WHERE id = $2',
+      [status, itemId],
+    );
+  },
+
+  /** Acrescenta ao manifesto o que chegou sem lá estar (§ 3.36, decisão 2). */
+  async addItem(transferId, item) {
+    const { rows } = await pool.query(`
+      INSERT INTO warehouse_transfer_items (id, transfer_id, order_id, tracking_code, status)
+      VALUES ($1,$2,$3,$4,$5)
+      ON CONFLICT (transfer_id, order_id) DO UPDATE SET status = EXCLUDED.status, updated_at = NOW()
+      RETURNING *
+    `, [item.id, transferId, item.order_id, item.tracking_code ?? null, item.status]);
+    return rows[0];
+  },
+};
+
+/** @param {object} row @returns {object} */
+function rowToCount(row) {
+  return {
+    id:           row.id,
+    warehouse_id: row.warehouse_id,
+    status:       row.status,
+    expected:     row.expected ?? [],
+    scanned:      row.scanned ?? [],
+    result:       row.result ?? null,
+    notes:        row.notes ?? null,
+    opened_by:    row.opened_by ?? null,
+    closed_by:    row.closed_by ?? null,
+    opened_at:    isoOf(row.opened_at),
+    closed_at:    row.closed_at ? isoOf(row.closed_at) : null,
+  };
+}
+
+const CountRepository = {
+  async create(count) {
+    const { rows } = await pool.query(`
+      INSERT INTO warehouse_counts (
+        id, company_id, warehouse_id, status, expected, scanned, opened_by, opened_at
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+      RETURNING *
+    `, [
+      count.id, count.company_id ?? writeCompanyId(), count.warehouse_id, count.status,
+      JSON.stringify(count.expected ?? []), JSON.stringify(count.scanned ?? []),
+      count.opened_by ?? null, count.opened_at,
+    ]);
+    return rowToCount(rows[0]);
+  },
+
+  async findById(id) {
+    const params = [id];
+    const { rows } = await pool.query(
+      `SELECT * FROM warehouse_counts WHERE id = $1${companyClause(params)} LIMIT 1`,
+      params,
+    );
+    return rows.length ? rowToCount(rows[0]) : undefined;
+  },
+
+  /**
+   * A contagem aberta de um armazém, se houver.
+   *
+   * Duas contagens abertas ao mesmo tempo no mesmo armazém dariam dois
+   * relatórios contraditórios sobre o mesmo instante.
+   */
+  async findOpenByWarehouse(warehouseId) {
+    const params = [warehouseId];
+    const { rows } = await pool.query(
+      `SELECT * FROM warehouse_counts WHERE warehouse_id = $1 AND status = 'open'${companyClause(params)} LIMIT 1`,
+      params,
+    );
+    return rows.length ? rowToCount(rows[0]) : undefined;
+  },
+
+  async listByWarehouse(warehouseId) {
+    const params = [warehouseId];
+    const { rows } = await pool.query(
+      `SELECT * FROM warehouse_counts WHERE warehouse_id = $1${companyClause(params)} ORDER BY opened_at DESC LIMIT 50`,
+      params,
+    );
+    return rows.map(rowToCount);
+  },
+
+  async update(id, patch) {
+    const sets = [];
+    const params = [];
+    const col = (name, value) => { params.push(value); sets.push(`${name} = $${params.length}`); };
+    if (patch.status   !== undefined) col('status', patch.status);
+    if (patch.scanned  !== undefined) col('scanned', JSON.stringify(patch.scanned));
+    if (patch.result   !== undefined) col('result', JSON.stringify(patch.result));
+    if (patch.notes    !== undefined) col('notes', patch.notes);
+    if (patch.closed_by !== undefined) col('closed_by', patch.closed_by);
+    if (patch.closed_at !== undefined) col('closed_at', patch.closed_at);
+    if (sets.length === 0) return CountRepository.findById(id);
+
+    params.push(id);
+    const { rows } = await pool.query(
+      `UPDATE warehouse_counts SET ${sets.join(', ')} WHERE id = $${params.length}${companyClause(params)} RETURNING *`,
+      params,
+    );
+    return rows.length ? rowToCount(rows[0]) : undefined;
+  },
+};
+
 // ─── ContractRepository ───────────────────────────────────────────────────────
 // Contratos de cliente (spec § 3.35). As tarifas negociadas vivem em JSONB na
 // própria linha — ver a nota em migrations/contracts.js.
@@ -3227,4 +3457,4 @@ const HrPortalRepository = {
   ]);return{profile:profile.rows[0],leave_balance:balances.rows[0]||null,attendance:attendance.rows,leaves:leaves.rows,time_bank_minutes:Number(timeBank.rows[0]?.balance_minutes||0),time_bank:timeBank.rows,documents:documents.rows,trainings:trainings.rows,benefits:benefits.rows.map(r=>({...r,amount_cents:Number(r.amount_cents),balance_cents:Number(r.balance_cents)})),performance:performance.rows,payslips:payslips.rows.map(r=>({...r,base_salary_cents:Number(r.base_salary_cents),gross_cents:Number(r.gross_cents),deductions_cents:Number(r.deductions_cents),net_cents:Number(r.net_cents)}))};}
 };
 
-module.exports = { OrderRepository, DriverRepository, UserRepository, UserLocationRepository, WarehouseRepository, SettlementRepository, SupportRepository, ClientRepository, ContractRepository, PricingRepository, InvoiceRepository, DocumentSeriesRepository, AuditRepository, PasswordResetRepository, CompanyRepository, CompanyProfileRepository, PlanRepository, SubscriptionRepository, UsageRepository, SubscriptionInvoiceRepository, HrRepository, HrOperationsRepository, HrPortalRepository, FinanceRepository, FleetRepository };
+module.exports = { OrderRepository, DriverRepository, UserRepository, UserLocationRepository, WarehouseRepository, SettlementRepository, SupportRepository, ClientRepository, ContractRepository, TransferRepository, CountRepository, PricingRepository, InvoiceRepository, DocumentSeriesRepository, AuditRepository, PasswordResetRepository, CompanyRepository, CompanyProfileRepository, PlanRepository, SubscriptionRepository, UsageRepository, SubscriptionInvoiceRepository, HrRepository, HrOperationsRepository, HrPortalRepository, FinanceRepository, FleetRepository };

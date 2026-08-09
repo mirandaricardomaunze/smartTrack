@@ -30,7 +30,12 @@ export const VALID_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
   [OrderStatus.COLLECTED]:            [OrderStatus.IN_TRANSIT, OrderStatus.FAILED],
   [OrderStatus.IN_TRANSIT]:           [OrderStatus.AT_WAREHOUSE, OrderStatus.OUT_FOR_DELIVERY, OrderStatus.FAILED],
   // DELIVERED a partir do armazém = levantamento ao balcão (spec § 3.23).
-  [OrderStatus.AT_WAREHOUSE]:         [OrderStatus.AWAITING_DESTINATION, OrderStatus.OUT_FOR_DELIVERY, OrderStatus.DELIVERED],
+  // IN_TRANSIT a partir do armazém = transferência entre filiais (spec § 3.36):
+  // a encomenda sai de uma unidade para outra da mesma empresa e, durante o
+  // percurso, não está em armazém nenhum. Faltava porque o modelo assumia um
+  // único armazém; sem esta transição, mover carga entre filiais só era possível
+  // fingindo uma expedição para entrega.
+  [OrderStatus.AT_WAREHOUSE]:         [OrderStatus.AWAITING_DESTINATION, OrderStatus.OUT_FOR_DELIVERY, OrderStatus.DELIVERED, OrderStatus.IN_TRANSIT],
   [OrderStatus.AWAITING_DESTINATION]: [OrderStatus.OUT_FOR_DELIVERY, OrderStatus.DELIVERED, OrderStatus.CANCELLED],
   [OrderStatus.OUT_FOR_DELIVERY]:     [OrderStatus.DELIVERED, OrderStatus.FAILED],
   [OrderStatus.DELIVERED]:            [],

@@ -20,6 +20,7 @@ import {
   type CreateWarehouseData,
 } from '@/services/api';
 import { Button, Card, Input, PageHeader, Pagination, Select, StatCard, paginationMeta } from '@/components/ui';
+import InventarioArmazem from '@/components/InventarioArmazem';
 
 // ─── Ícones (SVG) ─────────────────────────────────────────────────────────────
 
@@ -660,6 +661,16 @@ export default function ArmazensPage() {
                   ))}
                 </div>
               )}
+            </div>
+
+            {/* Inventário, transferências e contagem (§ 3.36). Antes dos
+                movimentos: o que está por fazer vem antes do que já se fez. */}
+            <div className="border-t border-white/[0.06] pt-4">
+              <InventarioArmazem
+                warehouse={selected}
+                warehouses={warehouses}
+                onChanged={() => { void loadData(); void refreshSelected(selected.id); }}
+              />
             </div>
 
             {/* Movimentos */}

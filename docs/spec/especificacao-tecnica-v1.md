@@ -1081,6 +1081,88 @@ encomenda que ultrapassa o limite de crédito é recusada **antes** de ser grava
 
 ---
 
+### 3.36 Inventário e transferências entre filiais
+
+Havia entrada e envio, mas mover carga entre duas unidades da mesma empresa
+fazia-se como um envio seguido de uma entrada — **dois atos sem ligação
+nenhuma**. Entre um e outro a encomenda não estava em lado nenhum, e se não
+chegasse, ninguém tinha como saber que devia ter chegado. É na transferência que
+as encomendas se perdem, e sem manifesto à saída e conferência à chegada ninguém
+sabe onde.
+
+**A reconciliação é a peça central, e aparece duas vezes no domínio:** conferir o
+que chegou contra o manifesto, e conferir o que está no armazém contra o que o
+sistema diz. É a mesma operação — esperado contra lido — e por isso é **uma**
+função pura usada pelas duas. Escrevê-la duas vezes daria duas definições de "em
+falta" que divergiriam à primeira correção. Ler duas vezes a mesma etiqueta não
+conta duas vezes: é o que acontece num armazém, e produziria uma divergência que
+não existe. Uma encomenda **a mais** é tão errada como uma a menos — aquela
+devia estar noutro sítio.
+
+**O ciclo:** `draft` (manifesto montado, carga ainda na origem) → `in_transit`
+(saiu) → `received` (conferida no destino). Três decisões definem o
+comportamento:
+
+1. **Durante o percurso a encomenda não está em armazém nenhum.** Vai a
+   `in_transit` e **perde** o `warehouse_id`. Deixá-la a contar na ocupação da
+   origem daria um inventário que não corresponde ao que lá está. Isto exigiu a
+   transição `at_warehouse → in_transit`, que faltava porque o modelo assumia um
+   único armazém.
+2. **Receber nunca recusa por capacidade.** A entrada normal recusa — a encomenda
+   ainda não foi aceite e diz-se ao portador que a leve a outro lado. Aqui o
+   camião já descarregou: recusar seria ficção, e a encomenda ficava sem sítio
+   nenhum no sistema enquanto está fisicamente no chão do armazém. O excesso é
+   **reportado**, não travado.
+3. **O que chega sem estar no manifesto é recebido na mesma** e marcado como
+   inesperado — a encomenda está ali, e recusá-la deixava-a em limbo. **O que
+   está no manifesto e não chega fica `in_transit`, sem armazém**: não se inventa
+   uma localização para uma encomenda perdida.
+
+Uma conferência com divergências entra na auditoria com resultado `denied` e não
+`success`: não é um erro do sistema, mas também não pode ser um sucesso
+silencioso.
+
+**Contagem de inventário.** Ao abrir, congela-se o que o sistema diz estar no
+armazém. O congelamento é o ponto: comparar no fim com o estado **atual**
+acusaria como divergência tudo o que entrou e saiu legitimamente durante as duas
+horas em que se andou a ler códigos. As leituras acumulam entre passagens, como o
+leitor de mão funciona. Só pode haver **uma contagem aberta por armazém** — duas
+dariam dois relatórios contraditórios sobre o mesmo instante. **Fechar não corrige
+nada:** uma contagem diz o que está diferente; decidir o que fazer com uma
+encomenda que não aparece é do responsável da unidade, e mover registos
+automaticamente com base numa leitura apagaria a prova do problema.
+
+**Idade da carga parada.** A ocupação diz quantas encomendas estão no armazém; a
+idade diz **quais é que não deviam estar**. Baldes em 3 e 7 dias — a fronteira
+habitual entre "está a andar", "atrasou" e "alguém tem de ir ver". Uma encomenda
+parada há três semanas ocupa espaço que nega outra e é uma falha de serviço que
+ninguém reparou.
+
+- **Backend (`/v1/inventory`, RBAC ADMIN/SUPPORT):** quem está ao balcão de uma
+  filial precisa de conferir o que chegou — mandar isso passar por um ADMIN
+  pararia a operação enquanto o camião espera. `GET /warehouses/:id`,
+  `GET|POST /transfers`, `GET /transfers/:id`, `POST /transfers/:id/dispatch`,
+  `POST /transfers/:id/receive`, `POST /transfers/:id/cancel`,
+  `GET|POST /warehouses/:id/counts`, `POST /counts/:id/scans`,
+  `POST /counts/:id/close`. Entidades `warehouse_transfers`,
+  `warehouse_transfer_items`, `warehouse_counts`.
+- **Itens têm tabela, contagens não.** Um item de transferência tem ciclo de vida
+  próprio e responde-se por ele individualmente — *"esta encomenda não chegou, em
+  que transferência ia?"*. Uma contagem é a fotografia de um instante: interessa o
+  relatório, e ninguém pergunta em que contagens é que uma encomenda apareceu.
+- **Frontend admin:** no detalhe do armazém, idade da carga, transferências de
+  entrada e de saída, conferência por leitura de código de barras e contagem.
+  Reutiliza o padrão de campo auto-focado do "Modo leitura" (§ 3.15). Sem emojis.
+
+**Critérios de aceitação:** uma transferência para o mesmo armazém é recusada;
+encomendas que não estão na origem não entram no manifesto; despachada, a carga
+não conta na ocupação de nenhum dos dois armazéns; o que não chega fica em
+trânsito e nomeado como em falta, sem travar a entrada das outras; o que chega
+fora do manifesto é recebido e nomeado; uma contagem compara com o instante em
+que abriu e não move nada ao fechar.
+
+---
+
 ## 4. Requisitos Não Funcionais
 
 ### Cópias de segurança e restauro
@@ -1396,7 +1478,7 @@ O que já existe está marcado; o que falta é o que a operação real ainda ped
 - [x] Manutenção, combustível e documentos da frota (§ 3.18)
 - [x] Portal do cliente e app do motorista com funcionamento offline (§ 3.6, § 3.25)
 - [x] Contratos por cliente: desconto, tarifa negociada por zona, frete mínimo, prazo de pagamento e limite de crédito, aplicados pelo sistema (§ 3.35)
-- [ ] Inventário e transferência entre filiais
+- [x] Inventário com idade da carga, contagem física e transferência entre filiais com manifesto e conferência (§ 3.36)
 - [ ] Reagendamento e devoluções como fluxo próprio (§ 3.26, § 3.27)
 - [ ] Despacho automático (a atribuição é manual)
 - [ ] SMS, WhatsApp, email e push com provedores reais — hoje simulados fora do email

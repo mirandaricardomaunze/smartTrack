@@ -1095,6 +1095,67 @@ export interface Warehouse {
   updatedAt: string;
 }
 
+// ─── Inventário e transferências entre filiais (spec § 3.36) ─────────────────
+
+export type TransferStatus = 'draft' | 'in_transit' | 'received' | 'cancelled';
+export type TransferItemStatus = 'pending' | 'received' | 'missing' | 'unexpected';
+
+export interface TransferItem {
+  id: string;
+  order_id: string;
+  tracking_code: string | null;
+  status: TransferItemStatus;
+}
+
+export interface Transfer {
+  id: string;
+  code: string;
+  origin_id: string;
+  destination_id: string;
+  status: TransferStatus;
+  notes: string | null;
+  dispatched_at: string | null;
+  received_at: string | null;
+  created_at: string;
+  items: TransferItem[];
+}
+
+/** O que se esperava contra o que se leu. A mesma forma na conferência e na contagem. */
+export interface Reconciliation {
+  found: string[];
+  missing: string[];
+  unexpected: string[];
+  expected_count: number;
+  scanned_count: number;
+  ok: boolean;
+}
+
+export interface TransferReceipt {
+  transfer: Transfer;
+  reconciliation: Reconciliation;
+  /** Recebeu-se acima da capacidade — informa, não trava (§ 3.36). */
+  over_capacity: boolean;
+}
+
+export interface WarehouseInventory {
+  warehouse: { id: string; code: string; name: string; capacity: number; occupancy: number; utilization: number; near_capacity: boolean };
+  items: Array<{ id: string; tracking_code: string; days_in_warehouse: number }>;
+  buckets: { fresh: number; aging: number; stale: number };
+  oldest_days: number;
+}
+
+export interface InventoryCount {
+  id: string;
+  warehouse_id: string;
+  status: 'open' | 'closed';
+  expected: string[];
+  scanned: string[];
+  result: Reconciliation | null;
+  notes: string | null;
+  opened_at: string;
+  closed_at: string | null;
+}
+
 export interface BackendWarehouseMovement {
   id: string;
   warehouse_id: string;
@@ -2046,6 +2107,45 @@ export const adminApi = {
   },
 
   /** Entrada: regista a receção física de uma encomenda no armazém. */
+  // ─── Inventário e transferências entre filiais (spec § 3.36) ────────────────
+
+  getInventario: (warehouseId: string): Promise<WarehouseInventory> =>
+    fetchApi<WarehouseInventory>(`/inventory/warehouses/${warehouseId}`),
+
+  getTransferencias: (warehouseId?: string): Promise<Transfer[]> =>
+    fetchApi<Transfer[]>(`/inventory/transfers${warehouseId ? `?warehouse_id=${encodeURIComponent(warehouseId)}` : ''}`),
+
+  criarTransferencia: (data: { origin_id: string; destination_id: string; tracking_codes: string[]; notes?: string }): Promise<Transfer> =>
+    fetchApi<Transfer>('/inventory/transfers', { method: 'POST', body: JSON.stringify(data) }),
+
+  despacharTransferencia: (id: string): Promise<Transfer> =>
+    fetchApi<Transfer>(`/inventory/transfers/${id}/dispatch`, { method: 'POST' }),
+
+  /** Confere o que chegou contra o manifesto e devolve as divergências. */
+  receberTransferencia: (id: string, scannedCodes: string[], notes?: string): Promise<TransferReceipt> =>
+    fetchApi<TransferReceipt>(`/inventory/transfers/${id}/receive`, {
+      method: 'POST', body: JSON.stringify({ scanned_codes: scannedCodes, notes }),
+    }),
+
+  cancelarTransferencia: (id: string): Promise<Transfer> =>
+    fetchApi<Transfer>(`/inventory/transfers/${id}/cancel`, { method: 'POST' }),
+
+  getContagens: (warehouseId: string): Promise<InventoryCount[]> =>
+    fetchApi<InventoryCount[]>(`/inventory/warehouses/${warehouseId}/counts`),
+
+  abrirContagem: (warehouseId: string): Promise<InventoryCount> =>
+    fetchApi<InventoryCount>(`/inventory/warehouses/${warehouseId}/counts`, { method: 'POST' }),
+
+  lerNaContagem: (countId: string, codes: string[]): Promise<InventoryCount> =>
+    fetchApi<InventoryCount>(`/inventory/counts/${countId}/scans`, {
+      method: 'POST', body: JSON.stringify({ codes }),
+    }),
+
+  fecharContagem: (countId: string, notes?: string): Promise<InventoryCount> =>
+    fetchApi<InventoryCount>(`/inventory/counts/${countId}/close`, {
+      method: 'POST', body: JSON.stringify({ notes }),
+    }),
+
   intakeEncomenda: async (
     warehouseId: string,
     payload: { orderId?: string; trackingCode?: string; notes?: string },

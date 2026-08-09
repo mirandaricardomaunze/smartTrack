@@ -947,6 +947,94 @@ async function requestWarehouseShipment(orderId, dto) {
  * @param {{ destination: string; notes?: string; lat?: number; lng?: number }} dto
  * @returns {Promise<object>} Pedido atualizado
  */
+/**
+ * A encomenda sai de um armazém numa transferência entre filiais (§ 3.36).
+ *
+ * Difere de `requestWarehouseShipment` no essencial: aquela é a última perna —
+ * a encomenda sai PARA O DESTINATÁRIO e vai a `out_for_delivery`. Esta é um
+ * movimento interno: vai a `in_transit` e **perde o armazém**, porque durante o
+ * percurso não está em nenhum. Deixá-la a contar na ocupação da origem daria um
+ * inventário que não corresponde ao que lá está.
+ *
+ * @param {string} orderId
+ * @param {{ transfer_code?: string, user_id?: string }} [dto]
+ * @returns {Promise<object>}
+ */
+async function leaveWarehouseForTransfer(orderId, dto = {}) {
+  const order = await OrderRepository.findById(orderId);
+  if (!order) throw new OrderNotFoundError(orderId);
+  if (order.current_status !== OrderStatus.AT_WAREHOUSE) {
+    throw new WarehouseActionError(order.current_status);
+  }
+
+  const atualizado = await updateOrderStatus(orderId, {
+    new_status:   OrderStatus.IN_TRANSIT,
+    notes:        `Transferência entre filiais${dto.transfer_code ? ` (${dto.transfer_code})` : ''}`,
+    location:     'Em trânsito entre armazéns',
+    event_origin: 'ADMIN',
+    user_id:      dto.user_id,
+  });
+
+  // Só depois de a transição passar: se o estado não podia mudar, o armazém não
+  // pode ser limpo, ou a encomenda ficava sem localização nenhuma.
+  return OrderRepository.update({ ...atualizado, warehouse_id: undefined, updated_at: new Date().toISOString() });
+}
+
+/**
+ * A encomenda chega ao armazém de destino de uma transferência (§ 3.36).
+ *
+ * Não passa por `receiveIntoWarehouse` de propósito: aquela verifica capacidade
+ * e recusa. Aqui o camião já descarregou — recusar seria ficção, e a encomenda
+ * ficava sem sítio nenhum no sistema enquanto está fisicamente no chão do
+ * armazém. O excesso de capacidade é reportado pela transferência, não travado.
+ *
+ * @param {string} orderId
+ * @param {{ warehouse_id: string, transfer_code?: string, user_id?: string }} dto
+ * @returns {Promise<object>}
+ */
+async function arriveFromTransfer(orderId, dto) {
+  const order = await OrderRepository.findById(orderId);
+  if (!order) throw new OrderNotFoundError(orderId);
+  if (!dto?.warehouse_id) throw new MissingRequiredFieldError('warehouse_id');
+
+  // Já cá está (releitura de um código repetido na conferência): não há nada a
+  // fazer, e repetir a transição rebentaria a máquina de estados sem razão.
+  if (order.current_status === OrderStatus.AT_WAREHOUSE && order.warehouse_id === dto.warehouse_id) {
+    return order;
+  }
+  if (order.current_status !== OrderStatus.IN_TRANSIT) {
+    throw new WarehouseActionError(order.current_status);
+  }
+
+  const now  = new Date().toISOString();
+  const desc = `Recebida por transferência${dto.transfer_code ? ` (${dto.transfer_code})` : ''}`;
+  const latest = order.history[0];
+  const parentHash = latest ? (latest.hash || GENESIS_HASH) : GENESIS_HASH;
+  const hash = calculateEventHash(OrderStatus.AT_WAREHOUSE, desc, 'Armazém de destino', now, parentHash);
+
+  return OrderRepository.update({
+    ...order,
+    current_status: OrderStatus.AT_WAREHOUSE,
+    warehouse_id:   dto.warehouse_id,
+    updated_at:     now,
+    history: [
+      {
+        id: crypto.randomUUID(),
+        order_id: order.id,
+        status: OrderStatus.AT_WAREHOUSE,
+        description: desc,
+        location: 'Armazém de destino',
+        event_origin: 'ADMIN',
+        user_id: dto.user_id,
+        timestamp: now,
+        parent_hash: parentHash,
+        hash,
+      },
+      ...order.history,
+    ],
+  });
+}
+
 async function requestShipmentByCode(code, dto) {
   const order = await OrderRepository.findByCode(String(code || '').trim().toUpperCase());
   if (!order) throw new OrderNotFoundError(code);
@@ -1214,6 +1302,8 @@ module.exports = {
   updateOrderStatus,
   receiveIntoWarehouse,
   requestWarehouseShipment,
+  leaveWarehouseForTransfer,
+  arriveFromTransfer,
   requestShipmentByCode,
   deliverOrder,
   failDelivery,

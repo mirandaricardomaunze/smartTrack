@@ -16,7 +16,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { createRequire } from 'node:module';
-import { PricingZoneFactory, QuoteInputFactory, ServiceLevel } from '../harness/factories/pricing.factory';
+import { PricingZoneFactory, QuoteInputFactory, ServiceLevel, BULKY_BOX_CM } from '../harness/factories/pricing.factory';
 import { OrderFactory } from '../harness/factories/order.factory';
 
 const require = createRequire(import.meta.url);
@@ -34,7 +34,7 @@ const ORDER_ID = 'order-itest-price-0001';
 
 async function cleanup() {
   await pool.query('DELETE FROM orders WHERE id = $1', [ORDER_ID]);
-  await pool.query('DELETE FROM pricing_zones WHERE code = $1', [ZONE_CODE]);
+  await pool.query('DELETE FROM pricing_zones WHERE code = ANY($1::text[])', [[ZONE_CODE, `${ZONE_CODE}_KM`]]);
 }
 
 describe.skipIf(!disponivel)('api-gateway · tarifação · PostgreSQL', () => {
@@ -110,5 +110,53 @@ describe.skipIf(!disponivel)('api-gateway · tarifação · PostgreSQL', () => {
     expect(saved.value).toBe(26000);
     expect(saved.pricing.total_cents).toBe(26000);
     expect(saved.pricing.zone_code).toBe(ZONE_CODE);
+  });
+
+  // ── Volume e distância (§ 3.13) ────────────────────────────────────────────
+
+  it('should persist the per-km price on a zone', async () => {
+    const zona = await svc.createZone(PricingZoneFactory.withDistance({
+      code: `${ZONE_CODE}_KM`, name: 'Zona ITEST km',
+    }));
+
+    expect(zona.per_km_cents).toBe(1500);
+    expect(zona.included_km).toBe(5);
+
+    // E volta a sair da base com os mesmos valores — é o round-trip que prova
+    // que as colunas novas são lidas e escritas, e não só aceites na entrada.
+    const relida = (await svc.listZones()).find((z) => z.code === `${ZONE_CODE}_KM`);
+    expect(relida.per_km_cents).toBe(1500);
+    expect(relida.included_km).toBe(5);
+  });
+
+  it('should quote distance through the use case, loading the zone from the database', async () => {
+    const orcamento = await svc.quote({ zone_code: `${ZONE_CODE}_KM`, weight_grams: 500, distance_km: 20 });
+
+    // 20 km − 5 incluídos = 15 × 15,00 = 225,00
+    expect(orcamento.distance_cents).toBe(15 * 1500);
+    expect(orcamento.total_cents).toBe(orcamento.base_cents + orcamento.weight_cents + orcamento.distance_cents);
+  });
+
+  it('should leave existing zones charging exactly what they charged before', async () => {
+    // A migração pôs os campos a zero de propósito: uma base já em uso não pode
+    // começar a cobrar distância por causa de um deploy.
+    const antes = await svc.quote({ zone_code: ZONE_CODE, weight_grams: 3000 });
+    const comKm = await svc.quote({ zone_code: ZONE_CODE, weight_grams: 3000, distance_km: 100 });
+
+    expect(comKm.distance_cents).toBe(0);
+    expect(comKm.total_cents).toBe(antes.total_cents);
+  });
+
+  it('should charge a bulky box by its volumetric weight end to end', async () => {
+    const orcamento = await svc.quote({
+      zone_code: ZONE_CODE,
+      weight_grams: 8000,
+      dimensions_cm: BULKY_BOX_CM,
+    });
+
+    expect(orcamento.charged_by_volume).toBe(true);
+    expect(orcamento.chargeable_grams).toBe(24000);
+    // 24 kg − 1 incluído = 23 × 30,00
+    expect(orcamento.weight_cents).toBe(23 * 3000);
   });
 });

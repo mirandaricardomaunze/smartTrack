@@ -179,7 +179,10 @@ function applyContractToQuote(quote, contract) {
     };
   }
 
-  const freteBruto = quote.base_cents + quote.weight_cents + quote.service_cents + quote.modal_cents;
+  // `distance_cents` com `?? 0` porque um orçamento antigo (ou um teste que
+  // monta o detalhe à mão) não o traz — e somar `undefined` daria NaN no total.
+  const freteBruto = quote.base_cents + quote.weight_cents + (quote.distance_cents ?? 0)
+    + quote.service_cents + quote.modal_cents;
   const pct = Math.min(100, Math.max(0, Number(contract.discount_pct) || 0));
   const desconto = Math.round((freteBruto * pct) / 100);
 

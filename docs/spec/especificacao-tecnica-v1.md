@@ -263,12 +263,45 @@ listagem paginada, o código lido pode não estar na página aberta.
   sobretaxa de COD (% configurável). Valores em **centavos (MZN)**. Cálculo por **função pura
   `computeQuote`** (testável); o pedido guarda `weight_grams` e o detalhe `pricing` (base para a
   faturação §3.14).
+
+**Peso cobrável (volume).** Um colchão pesa 8 kg e ocupa a carrinha inteira: cobrado ao peso, essa
+entrega dá prejuízo, porque o custo não é o peso — é o espaço que nega a outra encomenda. Com as
+três dimensões, cobra-se o **maior entre o peso real e o volumétrico**
+(`C × L × A / PRICING_VOLUMETRIC_DIVISOR`, 5000 por omissão). O divisor é por ambiente e não por
+zona: é uma política da empresa, e divisores diferentes na mesma tabela tornariam impossível
+explicar ao cliente porque a mesma caixa custa dois preços. **Com dois lados não se calcula nada** —
+assumir o terceiro produziria um preço inventado. O detalhe traz sempre `weight_grams`,
+`volumetric_grams`, `chargeable_grams` e `charged_by_volume`: *"porque é que pago 24 kg se a caixa
+pesa 8?"* é a pergunta mais frequente de quem recebe a fatura, e sem os dois números não tem
+resposta.
+
+**Distância.** Dentro da mesma zona, 3 km e 60 km não custam o mesmo. `per_km_cents` cobra os
+quilómetros **acima** de `included_km` — cobrar desde o primeiro metro faria a entrega ao lado do
+armazém sair mais cara do que a da concorrência. A parcela entra **antes** dos multiplicadores: um
+expresso a 60 km custa mais do que um normal a 60 km, e deixá-la de fora dava o mesmo acréscimo aos
+dois. Ambos os campos nascem a **zero**, pelo que uma base já em uso cobra exatamente o mesmo depois
+da migração: uma migração que muda preços sozinha seria a pior surpresa possível.
+
+**As dimensões também alimentam a verificação de modal.** O § 3.33 já sabia recusar por volume e por
+maior lado e nunca recebia esses valores: uma caixa de 1,5 m passava na conta de peso e não entrava
+na moto. A capacidade continua a ser verificada contra o **peso real** e não o cobrável — o veículo
+carrega quilos, não unidades de faturação.
+
 - **Backend (`/v1/pricing`, RBAC ADMIN/SUPPORT; gestão de zonas só ADMIN):** `GET /zones`,
   `POST /quote`, `POST /zones`, `PUT /zones/:id`, `POST /zones/:id/deactivate`. Entidade
   `pricing_zones` com **zonas por default de Moçambique** (Maputo Cidade, Grande Maputo, Sul,
-  Centro, Norte, Internacional). `orders` += `weight_grams`, `pricing` (nullable).
-- **Frontend admin (`/tarifas`):** gestão de zonas + **simulador de orçamento**. No cadastro de
-  pedido, campos peso/zona/serviço com **"Calcular orçamento"** que preenche o valor. Sem emojis.
+  Centro, Norte, Internacional) e `per_km_cents` / `included_km`. `orders` += `weight_grams`,
+  `pricing` (nullable). `POST /quote` aceita `dimensions_cm`, `distance_km` e `client_ref_id`
+  (aplica o contrato — § 3.35).
+- **Frontend admin (`/tarifas`):** gestão de zonas (incluindo preço por km) + **simulador de
+  orçamento** com dimensões e distância. No cadastro de pedido, peso/zona/serviço mais dimensões e
+  distância, com **"Calcular orçamento"** que preenche o valor e mostra os dois pesos quando o
+  volumétrico manda. Sem emojis.
+
+**Critérios de aceitação:** um orçamento sem dimensões e sem distância dá exatamente o mesmo valor
+de antes; uma caixa volumosa e leve é cobrada pelo volume, com os dois pesos visíveis; os km
+incluídos não são cobrados; o expresso incide também sobre a distância; e uma caixa que não cabe no
+baú da moto é assinalada mesmo quando o peso caberia.
 
 ### 3.14 Faturação (fatura-recibo)
 - **Fatura-recibo interna** do serviço de entrega (frete), emitida a partir de um pedido. O valor do
@@ -1355,8 +1388,7 @@ Nada de novo entra enquanto isto não estiver fechado. Concluído:
 O que já existe está marcado; o que falta é o que a operação real ainda pede.
 
 - [x] Clientes; recolha, expedição e entrega
-- [x] Tarifação por **zona, peso, nível de serviço e modal**, com sobretaxa de COD (§ 3.13)
-- [ ] Tarifação por **volume** (peso cobrável = maior entre real e volumétrico) e por **distância**
+- [x] Tarifação por **zona, peso, volume, distância, nível de serviço e modal**, com sobretaxa de COD (§ 3.13)
 - [x] Armazéns e movimentos; etiquetas e leitura de códigos (§ 3.15)
 - [x] Planeamento de rotas e verificação de carga no despacho (§ 3.2, § 3.33)
 - [x] Rastreio GPS dos motoristas; POD com foto, assinatura, nome, localização e data (§ 3.28)

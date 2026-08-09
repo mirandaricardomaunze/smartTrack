@@ -160,6 +160,12 @@ export default function PedidosPage() {
   const [clientPickerOpen, setClientPickerOpen] = useState(false);
   // Tarifação (spec § 3.13)
   const [newOrderWeight, setNewOrderWeight] = useState('');
+  // Dimensões e distância (§ 3.13). Vazias por omissão: a encomenda simples
+  // continua a orçar-se com peso e zona, sem seis campos por preencher.
+  const [newOrderC, setNewOrderC] = useState('');
+  const [newOrderL, setNewOrderL] = useState('');
+  const [newOrderA, setNewOrderA] = useState('');
+  const [newOrderKm, setNewOrderKm] = useState('');
   const [newOrderZone, setNewOrderZone] = useState('');
   const [newOrderService, setNewOrderService] = useState<ServiceLevel>('normal');
   const [pricingZones, setPricingZones] = useState<PricingZone[]>([]);
@@ -371,6 +377,14 @@ export default function PedidosPage() {
         weight_grams: Math.round((parseFloat(newOrderWeight) || 0) * 1000),
         service: newOrderService,
         cod_amount: parseInt(newOrderCod, 10) || 0,
+        // Só com os três lados: com dois não há volume que calcular.
+        dimensions_cm: (parseFloat(newOrderC) > 0 && parseFloat(newOrderL) > 0 && parseFloat(newOrderA) > 0)
+          ? { length_cm: parseFloat(newOrderC), width_cm: parseFloat(newOrderL), height_cm: parseFloat(newOrderA) }
+          : undefined,
+        distance_km: parseFloat(newOrderKm) > 0 ? parseFloat(newOrderKm) : undefined,
+        // Com cliente registado, o contrato em vigor entra sozinho no preço
+        // (§ 3.35) — é o que evita ter de lembrar o desconto acordado.
+        client_ref_id: newOrderClientRefId,
       });
       setNewOrderQuote(q);
       setNewOrderValor(String(q.total_cents));
@@ -1184,6 +1198,32 @@ export default function PedidosPage() {
                     </select>
                   </div>
                 </div>
+
+                {/* Dimensões e distância — opcionais. Uma caixa grande e leve
+                    paga pelo espaço que ocupa, não pelo peso (§ 3.13). */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  <div>
+                    <label className="block text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-1">Comp. (cm)</label>
+                    <input type="number" min="0" step="1" placeholder="—" className="input" value={newOrderC}
+                      onChange={(e: React.ChangeEvent<HTMLInputElement>) => { setNewOrderC(e.target.value); setNewOrderQuote(null); }} />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-1">Larg. (cm)</label>
+                    <input type="number" min="0" step="1" placeholder="—" className="input" value={newOrderL}
+                      onChange={(e: React.ChangeEvent<HTMLInputElement>) => { setNewOrderL(e.target.value); setNewOrderQuote(null); }} />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-1">Alt. (cm)</label>
+                    <input type="number" min="0" step="1" placeholder="—" className="input" value={newOrderA}
+                      onChange={(e: React.ChangeEvent<HTMLInputElement>) => { setNewOrderA(e.target.value); setNewOrderQuote(null); }} />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-1">Distância (km)</label>
+                    <input type="number" min="0" step="0.1" placeholder="—" className="input" value={newOrderKm}
+                      onChange={(e: React.ChangeEvent<HTMLInputElement>) => { setNewOrderKm(e.target.value); setNewOrderQuote(null); }} />
+                  </div>
+                </div>
+
                 <div className="flex items-center justify-between gap-3">
                   <button type="button" onClick={calcularOrcamento} disabled={!newOrderZone || quoting}
                     className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-brand-600 text-white hover:bg-brand-500 disabled:opacity-50 transition-colors">
@@ -1196,7 +1236,28 @@ export default function PedidosPage() {
                   )}
                 </div>
                 {newOrderQuote && (
-                  <p className="text-[10px] text-slate-500">Base {newOrderQuote.base_cents / 100} + peso {newOrderQuote.weight_cents / 100}{newOrderQuote.service_cents > 0 ? ` + serviço ${newOrderQuote.service_cents / 100}` : ''} MZN · preenche o valor abaixo.</p>
+                  <div className="flex flex-col gap-0.5">
+                    <p className="text-[10px] text-slate-500">
+                      Base {newOrderQuote.base_cents / 100} + peso {newOrderQuote.weight_cents / 100}
+                      {newOrderQuote.distance_cents > 0 ? ` + distância ${newOrderQuote.distance_cents / 100}` : ''}
+                      {newOrderQuote.service_cents > 0 ? ` + serviço ${newOrderQuote.service_cents / 100}` : ''} MZN · preenche o valor abaixo.
+                    </p>
+                    {/* Os dois pesos: sem eles, a fatura de uma caixa leve e
+                        volumosa não tem como se explicar ao cliente. */}
+                    {newOrderQuote.charged_by_volume && (
+                      <p className="text-[10px] text-amber-400">
+                        Cobrado por volume: real {(newOrderQuote.weight_grams / 1000).toFixed(1)} kg ·
+                        volumétrico {(newOrderQuote.volumetric_grams / 1000).toFixed(1)} kg.
+                      </p>
+                    )}
+                    {newOrderQuote.contract_code && (
+                      <p className="text-[10px] text-brand-300">
+                        Contrato {newOrderQuote.contract_code}
+                        {(newOrderQuote.contract_discount_cents ?? 0) > 0 ? ` · desconto ${(newOrderQuote.contract_discount_cents ?? 0) / 100} MZN` : ''}
+                        {newOrderQuote.negotiated_zone_rate ? ' · tarifa negociada' : ''}
+                      </p>
+                    )}
+                  </div>
                 )}
               </div>
 

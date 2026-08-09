@@ -1608,6 +1608,10 @@ function rowToZone(row) {
     base_cents:   Number(row.base_cents),
     per_kg_cents: Number(row.per_kg_cents),
     included_kg:  Number(row.included_kg),
+    // Tarifação por distância (§ 3.13). `?? 0` cobre a leitura de uma base onde
+    // a migração ainda não correu — a zona simplesmente não cobra ao km.
+    per_km_cents: Number(row.per_km_cents ?? 0),
+    included_km:  Number(row.included_km ?? 0),
     active:       row.active,
     sort_order:   Number(row.sort_order),
     created_at:   isoOf(row.created_at),
@@ -1642,10 +1646,10 @@ const PricingRepository = {
 
   async createZone(z) {
     const { rows } = await pool.query(`
-      INSERT INTO pricing_zones (id, code, name, base_cents, per_kg_cents, included_kg, active, sort_order, company_id, created_at, updated_at)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW(),NOW())
+      INSERT INTO pricing_zones (id, code, name, base_cents, per_kg_cents, included_kg, per_km_cents, included_km, active, sort_order, company_id, created_at, updated_at)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW(),NOW())
       RETURNING *
-    `, [z.id, z.code, z.name, z.base_cents, z.per_kg_cents, z.included_kg, z.active ?? true, z.sort_order ?? 0, z.company_id ?? writeCompanyId()]);
+    `, [z.id, z.code, z.name, z.base_cents, z.per_kg_cents, z.included_kg, z.per_km_cents ?? 0, z.included_km ?? 0, z.active ?? true, z.sort_order ?? 0, z.company_id ?? writeCompanyId()]);
     return rowToZone(rows[0]);
   },
 
@@ -1657,6 +1661,8 @@ const PricingRepository = {
     if (patch.base_cents   !== undefined) col('base_cents', patch.base_cents);
     if (patch.per_kg_cents !== undefined) col('per_kg_cents', patch.per_kg_cents);
     if (patch.included_kg  !== undefined) col('included_kg', patch.included_kg);
+    if (patch.per_km_cents !== undefined) col('per_km_cents', patch.per_km_cents);
+    if (patch.included_km  !== undefined) col('included_km', patch.included_km);
     if (patch.active       !== undefined) col('active', patch.active);
     if (patch.sort_order   !== undefined) col('sort_order', patch.sort_order);
     if (sets.length === 0) return this.findZoneById(id);

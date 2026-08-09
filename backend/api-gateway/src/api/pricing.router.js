@@ -5,7 +5,10 @@
  * Spec ref: docs/spec/especificacao-tecnica-v1.md § 3.13
  *
  *   GET   /v1/pricing/zones          lista de zonas (ADMIN/SUPPORT)
- *   POST  /v1/pricing/quote          orçamento { weight_grams, zone_code, service, cod_amount, vehicle_modal }
+ *   POST  /v1/pricing/quote          orçamento { zone_code, weight_grams, dimensions_cm,
+ *                                    distance_km, service, cod_amount, vehicle_modal, client_ref_id }
+ *                                    — `dimensions_cm` ativa o peso volumétrico (§ 3.13),
+ *                                    `client_ref_id` aplica o contrato em vigor (§ 3.35)
  *   POST  /v1/pricing/zones          criar zona (ADMIN)
  *   PUT   /v1/pricing/zones/:id       atualizar zona (ADMIN)
  *   POST  /v1/pricing/zones/:id/deactivate   desativar zona (ADMIN)

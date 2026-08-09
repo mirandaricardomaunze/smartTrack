@@ -164,6 +164,9 @@ export interface PricingZone {
   base_cents: number;
   per_kg_cents: number;
   included_kg: number;
+  /** Preço por km acima de `included_km`. 0 = a zona não cobra distância. */
+  per_km_cents: number;
+  included_km: number;
   active: boolean;
   sort_order: number;
   created_at: string;
@@ -176,8 +179,18 @@ export interface QuoteBreakdown {
   service: ServiceLevel;
   vehicle_modal: DeliveryModalCode | null;
   weight_grams: number;
+  /** Dimensões usadas no cálculo, quando foram dadas. */
+  dimensions_cm: Dimensions | null;
+  /** Peso derivado do volume. 0 sem dimensões. */
+  volumetric_grams: number;
+  /** O maior entre o real e o volumétrico — é este que a tabela cobra. */
+  chargeable_grams: number;
+  /** O volumétrico mandou? É o que justifica a fatura ao cliente. */
+  charged_by_volume: boolean;
+  distance_km: number | null;
   base_cents: number;
   weight_cents: number;
+  distance_cents: number;
   service_cents: number;
   modal_cents: number;
   cod_surcharge_cents: number;
@@ -186,6 +199,19 @@ export interface QuoteBreakdown {
   modal_fits: boolean;
   modal_reason: string | null;
   suggested_modal: DeliveryModalCode | null;
+  // Contrato aplicado (§ 3.35) — nulos quando o cliente paga a tabela pública.
+  contract_id?: string | null;
+  contract_code?: string | null;
+  contract_discount_cents?: number;
+  minimum_adjustment_cents?: number;
+  negotiated_zone_rate?: boolean;
+}
+
+/** Dimensões de um volume, em centímetros. */
+export interface Dimensions {
+  length_cm: number;
+  width_cm: number;
+  height_cm: number;
 }
 
 export interface QuoteInput {
@@ -194,6 +220,11 @@ export interface QuoteInput {
   service?: ServiceLevel;
   vehicle_modal?: DeliveryModalCode;
   cod_amount?: number;
+  /** Ativa o peso volumétrico. Só conta com os três lados preenchidos. */
+  dimensions_cm?: Dimensions;
+  distance_km?: number;
+  /** Aplica o contrato em vigor do cliente, se houver (§ 3.35). */
+  client_ref_id?: string;
 }
 
 export interface CreateZoneData {
@@ -202,6 +233,8 @@ export interface CreateZoneData {
   base_cents: number;
   per_kg_cents: number;
   included_kg: number;
+  per_km_cents?: number;
+  included_km?: number;
   active?: boolean;
   sort_order?: number;
 }

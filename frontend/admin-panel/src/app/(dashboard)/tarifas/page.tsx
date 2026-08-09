@@ -18,11 +18,19 @@ function mzn(cents: number): string {
 }
 
 // Formulário em MZN (o utilizador escreve valores legíveis; convertemos p/ centavos).
-interface ZoneForm { code: string; name: string; base: string; perKg: string; included: string; sort: string }
-const EMPTY_ZONE: ZoneForm = { code: '', name: '', base: '', perKg: '', included: '1', sort: '0' };
+interface ZoneForm { code: string; name: string; base: string; perKg: string; included: string; perKm: string; includedKm: string; sort: string }
+// `perKm` a zero por omissão: uma zona nova não cobra distância até alguém o
+// decidir. O contrário faria a primeira zona criada depois do deploy sair com
+// um preço diferente de todas as outras sem ninguém dar por isso.
+const EMPTY_ZONE: ZoneForm = { code: '', name: '', base: '', perKg: '', included: '1', perKm: '0', includedKm: '0', sort: '0' };
 
 function toForm(z: PricingZone): ZoneForm {
-  return { code: z.code, name: z.name, base: String(z.base_cents / 100), perKg: String(z.per_kg_cents / 100), included: String(z.included_kg), sort: String(z.sort_order) };
+  return {
+    code: z.code, name: z.name,
+    base: String(z.base_cents / 100), perKg: String(z.per_kg_cents / 100), included: String(z.included_kg),
+    perKm: String((z.per_km_cents ?? 0) / 100), includedKm: String(z.included_km ?? 0),
+    sort: String(z.sort_order),
+  };
 }
 
 export default function TarifasPage() {
@@ -42,6 +50,12 @@ export default function TarifasPage() {
   const [simService, setSimService] = useState<ServiceLevel>('normal');
   /** Vazio = sem modal: o preço fica o de base, como antes do § 3.33. */
   const [simModal, setSimModal] = useState<'' | DeliveryModalCode>('');
+  // Dimensões e distância — vazias por omissão para o simulador continuar a
+  // responder ao caso simples sem exigir seis campos preenchidos.
+  const [simC, setSimC] = useState('');
+  const [simL, setSimL] = useState('');
+  const [simA, setSimA] = useState('');
+  const [simKm, setSimKm] = useState('');
   const [modais, setModais] = useState<DeliveryModalSpec[]>([]);
   const [quote, setQuote] = useState<QuoteBreakdown | null>(null);
   const [quoteErr, setQuoteErr] = useState('');
@@ -77,6 +91,8 @@ export default function TarifasPage() {
       base_cents: Math.round((parseFloat(form.base) || 0) * 100),
       per_kg_cents: Math.round((parseFloat(form.perKg) || 0) * 100),
       included_kg: parseFloat(form.included) || 0,
+      per_km_cents: Math.round((parseFloat(form.perKm) || 0) * 100),
+      included_km: parseFloat(form.includedKm) || 0,
       sort_order: parseInt(form.sort, 10) || 0,
     };
     try {
@@ -110,12 +126,18 @@ export default function TarifasPage() {
         weight_grams: Math.round((parseFloat(simWeight) || 0) * 1000),
         service: simService,
         vehicle_modal: simModal || undefined,
+        // Só envia dimensões com os três lados: com dois não se calcula volume
+        // nenhum, e o servidor ignora-as na mesma.
+        dimensions_cm: (parseFloat(simC) > 0 && parseFloat(simL) > 0 && parseFloat(simA) > 0)
+          ? { length_cm: parseFloat(simC), width_cm: parseFloat(simL), height_cm: parseFloat(simA) }
+          : undefined,
+        distance_km: parseFloat(simKm) > 0 ? parseFloat(simKm) : undefined,
       }));
     } catch (err) {
       setQuote(null);
       setQuoteErr(err instanceof Error ? err.message : 'Falha ao calcular.');
     }
-  }, [simZone, simWeight, simService, simModal]);
+  }, [simZone, simWeight, simService, simModal, simC, simL, simA, simKm]);
 
   useEffect(() => { void runQuote(); }, [runQuote]);
 
@@ -156,6 +178,10 @@ export default function TarifasPage() {
             { key: 'base', header: 'Base', headerClassName: 'text-right', cellClassName: 'text-right font-mono text-xs', cell: (z) => mzn(z.base_cents) },
             { key: 'perkg', header: 'Por kg', headerClassName: 'text-right', cellClassName: 'text-right font-mono text-xs', cell: (z) => mzn(z.per_kg_cents) },
             { key: 'incl', header: 'Incluído', headerClassName: 'text-center', cellClassName: 'text-center text-xs', cell: (z) => `${z.included_kg} kg` },
+            { key: 'perkm', header: 'Por km', headerClassName: 'text-right', cellClassName: 'text-right font-mono text-xs',
+              // Um traço e não "0,00 MZN": a zona não cobra distância, e um zero
+              // formatado leva a ler que cobra e dá zero.
+              cell: (z) => (z.per_km_cents ?? 0) > 0 ? `${mzn(z.per_km_cents)}${z.included_km ? ` (+${z.included_km}km)` : ''}` : '—' },
             { key: 'active', header: 'Estado', cell: (z) => z.active
               ? <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400">Ativa</span>
               : <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-500/15 text-slate-400">Inativa</span> },
@@ -185,11 +211,40 @@ export default function TarifasPage() {
               ...modais.map((m) => ({ value: m.code, label: `${m.label} — até ${m.capacity_kg} kg` })),
             ]} className="text-xs" />
 
+          <div>
+            <p className="text-[11px] text-slate-400 mb-1">Dimensões (cm) — só contam com os três lados</p>
+            <div className="grid grid-cols-3 gap-2">
+              <Input label="Comp." type="number" min="0" step="1" value={simC} onChange={(e) => setSimC(e.target.value)} className="text-xs" />
+              <Input label="Larg." type="number" min="0" step="1" value={simL} onChange={(e) => setSimL(e.target.value)} className="text-xs" />
+              <Input label="Alt." type="number" min="0" step="1" value={simA} onChange={(e) => setSimA(e.target.value)} className="text-xs" />
+            </div>
+          </div>
+          <Input label="Distância (km)" type="number" min="0" step="0.1" value={simKm} onChange={(e) => setSimKm(e.target.value)} className="text-xs" />
+
           {quoteErr && <p className="text-xs text-red-400">{quoteErr}</p>}
           {quote && (
             <div className="rounded-xl bg-surface-elevated p-3 flex flex-col gap-1.5 text-xs">
               <div className="flex justify-between"><span className="text-slate-400">Base</span><span className="font-mono">{mzn(quote.base_cents)}</span></div>
-              <div className="flex justify-between"><span className="text-slate-400">Peso</span><span className="font-mono">{mzn(quote.weight_cents)}</span></div>
+              <div className="flex justify-between">
+                <span className="text-slate-400">
+                  Peso{quote.charged_by_volume && <span className="text-amber-400"> (volumétrico)</span>}
+                </span>
+                <span className="font-mono">{mzn(quote.weight_cents)}</span>
+              </div>
+              {/* Os dois pesos lado a lado: é a resposta a "porque pago 24 kg se
+                  a caixa pesa 8?", que é a pergunta mais frequente na fatura. */}
+              {quote.charged_by_volume && (
+                <div className="flex justify-between text-[11px] text-slate-500">
+                  <span>real {(quote.weight_grams / 1000).toFixed(1)} kg · volumétrico {(quote.volumetric_grams / 1000).toFixed(1)} kg</span>
+                  <span>cobra {(quote.chargeable_grams / 1000).toFixed(1)} kg</span>
+                </div>
+              )}
+              {quote.distance_cents > 0 && (
+                <div className="flex justify-between">
+                  <span className="text-slate-400">Distância{quote.distance_km ? ` (${quote.distance_km} km)` : ''}</span>
+                  <span className="font-mono">{mzn(quote.distance_cents)}</span>
+                </div>
+              )}
               {quote.service_cents > 0 && <div className="flex justify-between"><span className="text-slate-400">Serviço</span><span className="font-mono">{mzn(quote.service_cents)}</span></div>}
               {quote.modal_cents !== 0 && (
                 <div className="flex justify-between">
@@ -233,7 +288,13 @@ export default function TarifasPage() {
                 <Input label="Preço base (MZN)" type="number" min="0" step="0.01" value={form.base} onChange={(e) => setForm({ ...form, base: e.target.value })} className="text-xs" />
                 <Input label="Por kg (MZN)" type="number" min="0" step="0.01" value={form.perKg} onChange={(e) => setForm({ ...form, perKg: e.target.value })} className="text-xs" />
                 <Input label="Peso incluído (kg)" type="number" min="0" step="0.1" value={form.included} onChange={(e) => setForm({ ...form, included: e.target.value })} className="text-xs" containerClassName="col-span-2" />
+                <Input label="Por km (MZN)" type="number" min="0" step="0.01" value={form.perKm} onChange={(e) => setForm({ ...form, perKm: e.target.value })} className="text-xs" />
+                <Input label="Km incluídos" type="number" min="0" step="0.5" value={form.includedKm} onChange={(e) => setForm({ ...form, includedKm: e.target.value })} className="text-xs" />
               </div>
+              <p className="text-[11px] text-slate-500 -mt-1">
+                Por km a zero desliga a tarifação por distância nesta zona — é o comportamento de sempre.
+                Os km incluídos evitam que a entrega ao lado do armazém saia mais cara do que a da concorrência.
+              </p>
               {formError && <p className="text-xs text-red-400">{formError}</p>}
               <div className="flex justify-end gap-2">
                 <Button type="button" variant="secondary" onClick={() => setFormOpen(false)}>Cancelar</Button>

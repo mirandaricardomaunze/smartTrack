@@ -6,7 +6,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { adminApi, Pedido, HistoricoItem, type BackendDriver, type Warehouse, type DeliveryFailureReason, type CodMethod, type Client, type PricingZone, type QuoteBreakdown, type ServiceLevel, type OrdersStatsResponse, type PodImages, COD_METHOD_LABELS } from '@/services/api';
+import { adminApi, Pedido, HistoricoItem, type BackendDriver, type Warehouse, type DeliveryFailureReason, type CodMethod, type Client, type PricingZone, type QuoteBreakdown, type ServiceLevel, type OrdersStatsResponse, type PodImages, type ReturnReason, COD_METHOD_LABELS, RETURN_REASON_LABELS } from '@/services/api';
 import { printInvoice } from '@/services/invoicePrint';
 import { printLabels, type LabelData } from '@/services/labelPrint';
 import { usePreferences, densityClass } from '@/hooks/usePreferences';
@@ -187,6 +187,12 @@ export default function PedidosPage() {
   // Details/Timeline Modal State
   const [selectedPedido, setSelectedPedido] = useState<Pedido | null>(null);
   const [invoiceBusy, setInvoiceBusy] = useState(false);
+  // Reagendamento e devolução (§ 3.37) — só aparecem num pedido falhado.
+  const [reagendarData, setReagendarData] = useState('');
+  const [devolucaoMotivo, setDevolucaoMotivo] = useState<ReturnReason>('ATTEMPTS_EXHAUSTED');
+  const [devolucaoRecebidoPor, setDevolucaoRecebidoPor] = useState('');
+  const [redeliveryBusy, setRedeliveryBusy] = useState(false);
+  const [redeliveryErro, setRedeliveryErro] = useState('');
   const [invoiceMsg, setInvoiceMsg] = useState('');
   // Imagens do comprovativo: fora da listagem por peso (spec § 3.28), buscadas
   // quando o detalhe abre.
@@ -367,6 +373,23 @@ export default function PedidosPage() {
       .then((zs) => { setPricingZones(zs); if (zs.length && !newOrderZone) setNewOrderZone(zs[0].code); })
       .catch(() => setPricingZones([]));
   }, [isModalOpen, pricingZones.length, newOrderZone]);
+
+  /** Corre uma ação de reagendamento/devolução e recarrega o pedido. */
+  const acaoRedelivery = async (fn: () => Promise<unknown>) => {
+    setRedeliveryBusy(true);
+    setRedeliveryErro('');
+    try {
+      await fn();
+      setSelectedPedido(null);
+      await loadData();
+    } catch (e) {
+      // A mensagem do servidor é a útil: diz quantas tentativas restam ou
+      // porque é que a data foi recusada.
+      setRedeliveryErro(e instanceof Error ? e.message : 'A operação falhou.');
+    } finally {
+      setRedeliveryBusy(false);
+    }
+  };
 
   const calcularOrcamento = async () => {
     if (!newOrderZone) return;
@@ -1398,6 +1421,97 @@ export default function PedidosPage() {
                 </button>
               </div>
             </div>
+
+            {/* Reagendar ou devolver (§ 3.37). Só num pedido falhado: é a única
+                situação em que estas duas saídas fazem sentido. */}
+            {selectedPedido.status === 'failed' && (
+              <div className="rounded-xl border border-amber-500/20 bg-amber-500/[0.04] p-4 flex flex-col gap-3">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <h4 className="text-xs font-bold uppercase tracking-wider text-amber-300">Entrega falhada</h4>
+                  <span className="text-[11px] text-slate-400">
+                    {selectedPedido.deliveryAttempts ?? 0} tentativa(s)
+                  </span>
+                </div>
+
+                {redeliveryErro && <p role="alert" className="text-xs text-red-400">{redeliveryErro}</p>}
+
+                <div className="flex flex-col sm:flex-row gap-2 sm:items-end">
+                  <div className="flex-1">
+                    <label className="block text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-1">
+                      Nova tentativa
+                    </label>
+                    <input type="date" className="input text-xs" value={reagendarData}
+                      min={new Date().toISOString().slice(0, 10)}
+                      onChange={(e: React.ChangeEvent<HTMLInputElement>) => setReagendarData(e.target.value)} />
+                  </div>
+                  <button type="button" disabled={!reagendarData || redeliveryBusy}
+                    onClick={() => acaoRedelivery(() => adminApi.reagendarEntrega(selectedPedido.id, reagendarData))}
+                    className="text-xs font-semibold px-3 py-2 rounded-lg bg-brand-600 text-white hover:bg-brand-500 disabled:opacity-50 transition-colors">
+                    Reagendar
+                  </button>
+                </div>
+
+                <div className="flex flex-col sm:flex-row gap-2 sm:items-end border-t border-white/[0.06] pt-3">
+                  <div className="flex-1">
+                    <label className="block text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-1">
+                      Devolver ao remetente
+                    </label>
+                    <select className="input text-xs" value={devolucaoMotivo}
+                      onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setDevolucaoMotivo(e.target.value as ReturnReason)}>
+                      {(Object.keys(RETURN_REASON_LABELS) as ReturnReason[]).map((r) => (
+                        <option key={r} value={r}>{RETURN_REASON_LABELS[r]}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <button type="button" disabled={redeliveryBusy}
+                    onClick={() => acaoRedelivery(() => adminApi.iniciarDevolucao(selectedPedido.id, devolucaoMotivo))}
+                    className="text-xs font-semibold px-3 py-2 rounded-lg bg-surface-elevated text-slate-200 border border-white/10 hover:bg-surface-overlay disabled:opacity-50 transition-colors">
+                    Iniciar devolução
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Devolução em curso: falta confirmar quem a recebeu de volta. */}
+            {selectedPedido.returnInfo && !selectedPedido.returnInfo.received_at && (
+              <div className="rounded-xl border border-amber-500/20 bg-amber-500/[0.04] p-4 flex flex-col gap-2">
+                <h4 className="text-xs font-bold uppercase tracking-wider text-amber-300">Devolução em curso</h4>
+                <p className="text-[11px] text-slate-400">
+                  Motivo: {RETURN_REASON_LABELS[selectedPedido.returnInfo.reason]}. A encomenda está a caminho do remetente.
+                </p>
+                {redeliveryErro && <p role="alert" className="text-xs text-red-400">{redeliveryErro}</p>}
+                <div className="flex flex-col sm:flex-row gap-2 sm:items-end">
+                  <div className="flex-1">
+                    <label className="block text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-1">
+                      Quem recebeu de volta
+                    </label>
+                    <input className="input text-xs" placeholder="Nome de quem recebeu" value={devolucaoRecebidoPor}
+                      onChange={(e: React.ChangeEvent<HTMLInputElement>) => setDevolucaoRecebidoPor(e.target.value)} />
+                  </div>
+                  <button type="button" disabled={!devolucaoRecebidoPor.trim() || redeliveryBusy}
+                    onClick={() => acaoRedelivery(() => adminApi.confirmarDevolucao(selectedPedido.id, devolucaoRecebidoPor.trim()))}
+                    className="text-xs font-semibold px-3 py-2 rounded-lg bg-brand-600 text-white hover:bg-brand-500 disabled:opacity-50 transition-colors">
+                    Confirmar devolução
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Devolvida: o registo do que aconteceu, incluindo a fatura por decidir. */}
+            {selectedPedido.returnInfo?.received_at && (
+              <div className="rounded-xl border border-white/10 bg-surface-elevated p-4 flex flex-col gap-1">
+                <h4 className="text-xs font-bold uppercase tracking-wider text-slate-300">Devolvida ao remetente</h4>
+                <p className="text-[11px] text-slate-400">
+                  {RETURN_REASON_LABELS[selectedPedido.returnInfo.reason]} · recebida por {selectedPedido.returnInfo.received_by}
+                </p>
+                {selectedPedido.returnInfo.invoice_alert && (
+                  <p className="text-[11px] text-amber-300 mt-1">
+                    Fatura {selectedPedido.returnInfo.invoice_alert.number} continua ativa —
+                    emitir nota de crédito se a política da empresa o exigir.
+                  </p>
+                )}
+              </div>
+            )}
 
             {/* Comprovativo de entrega (POD) */}
             {selectedPedido.pod && (

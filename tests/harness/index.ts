@@ -19,6 +19,7 @@ export { InventoryFactory } from './factories/inventory.factory';
 export { TrackedShipmentFactory, IntlTrackingEventFactory } from './factories/tracking.factory';
 export { PodFactory, DeliveryFailureFactory, PodImagesFactory, dataUrlOfSize, PHONE_PHOTO_BYTES, TINY_PNG_DATA_URL } from './factories/pod.factory';
 export { PodCaptureFactory } from './factories/pod-capture.factory';
+export { RedeliveryFactory } from './factories/redelivery.factory';
 export type { TestImageFile, TestDecodedImage, EncodeAttempt } from './factories/pod-capture.factory';
 export { NavigationFactory, MAPUTO_COORDS } from './factories/navigation.factory';
 export type { TestNavigationStop } from './factories/navigation.factory';
@@ -80,6 +81,7 @@ export type { TestWarehouse, TestWarehouseMovement } from './factories/warehouse
 export type { TestTransferInput, TestReconciliation, TestStoredOrder, TransferStatus, TransferItemStatus } from './factories/inventory.factory';
 export type { TestTrackedShipment, TestIntlTrackingEvent, IntlCarrier } from './factories/tracking.factory';
 export type { TestProofOfDelivery, TestDeliveryFailure } from './factories/pod.factory';
+export type { TestRescheduleInput, TestReturnInput, TestReturnProof, ReturnReason } from './factories/redelivery.factory';
 export type { TestDriverSettlement, TestCodCollection } from './factories/settlement.factory';
 export type { TestOutboundMessage } from './factories/messaging.factory';
 export type { TestSupportThreadInput, TestSupportMessage } from './factories/support.factory';

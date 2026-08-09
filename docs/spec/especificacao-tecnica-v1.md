@@ -1163,6 +1163,76 @@ que abriu e não move nada ao fechar.
 
 ---
 
+### 3.37 Reagendamento e devolução ao remetente
+
+Uma entrega falhada ia a `failed` com um motivo e, a partir daí, o sistema não
+tinha resposta. As duas saídas que a operação real precisa não existiam: marcar
+nova tentativa, ou desistir e mandar a encomenda para trás. Sem elas, quem
+opera resolve por fora — telefonema, papel, memória — e a encomenda fica num
+estado que o painel mostra como falhado para sempre.
+
+**Isto não é a § 3.27.** Aquela descreve a devolução pedida pelo cliente que
+recebeu o produto e o quer devolver (`requested → approved → collecting →
+received → refunded`), com inspeção e reembolso. Esta secção é o caminho
+inverso da operação: a encomenda **não conseguiu ser entregue** e volta ao
+remetente. São fluxos diferentes, com origens e consequências diferentes, e
+tratá-los como um só produziria um estado a servir dois donos. A § 3.27
+continua por implementar; a § 3.26 (ocorrências com SLA e escalonamento) é da
+Prioridade 3.
+
+**Reagendar.**
+- Só a partir de `failed`: reagendar uma entrega que ainda não foi tentada não
+  significa nada.
+- A data combinada fica **no pedido** (`next_attempt_on`), não num comentário.
+  É o que permite não pôr a encomenda numa rota antes do dia acordado —
+  aparecer no dia errado é falhar a entrega uma segunda vez com o cliente à
+  espera.
+- Datas no passado são recusadas. Uma "nova tentativa" marcada para ontem é um
+  erro de digitação que ninguém apanha depois.
+- Cada reagendamento **conta**. `delivery_attempts` sobe, e acima de
+  `DELIVERY_MAX_ATTEMPTS` (3 por omissão) o reagendamento é recusado e o
+  caminho passa a ser a devolução. Sem teto, uma encomenda entra em ciclo
+  indefinido e ninguém repara — é o custo que não aparece em relatório nenhum.
+
+**Devolver ao remetente.** É uma entrega ao contrário, e por isso tem as
+mesmas exigências de uma entrega:
+- Começa a partir de `failed` ou de `at_warehouse` (a encomenda voltou ao
+  armazém e ficou lá), e a encomenda viaja de volta em `in_transit` com um
+  bloco `return` que diz o motivo, quem decidiu e quando.
+- Termina em **`returned`**, um estado terminal novo. Não é `failed` — isso é
+  uma tentativa — nem `cancelled`, que é uma encomenda que nunca chegou a
+  seguir. Confundi-los tiraria a única forma de contar quantas encomendas
+  voltaram.
+- Confirmar exige **prova**: quem recebeu de volta e quando. Uma devolução sem
+  prova é indistinguível de uma encomenda perdida, e é precisamente aí que a
+  discussão com o remetente acontece.
+
+**Consequências, e o que deliberadamente NÃO se automatiza:**
+- O **COD é cancelado** (`cod_status: 'cancelled'`). O dinheiro nunca foi
+  cobrado, e deixá-lo `pending` fá-lo aparecer eternamente no que há a receber.
+  Cancelado e não `none` porque `none` apagava o facto de ter existido um valor
+  a cobrar.
+- Se existir **fatura ativa**, a devolução **assinala-a e não emite nada**.
+  Creditar automaticamente seria inventar uma política comercial: há
+  transportadoras que cobram o frete na mesma (o trabalho foi feito) e outras
+  que creditam tudo. A nota de crédito emite-se pelo § 3.19, por decisão de
+  quem responde pela conta.
+
+- **Backend (`/v1/orders/:id`, RBAC ADMIN/SUPPORT; motorista pode reagendar):**
+  `POST /reschedule`, `POST /return`, `POST /return/confirm`. `orders` +=
+  `delivery_attempts`, `next_attempt_on`, `return` (JSONB).
+- **Frontend admin:** no detalhe de um pedido falhado, reagendar com data ou
+  iniciar devolução; a data marcada e o número de tentativas ficam visíveis na
+  listagem. Sem emojis.
+
+**Critérios de aceitação:** reagendar fora de `failed` é recusado; uma data no
+passado é recusada; acima do limite de tentativas o reagendamento é recusado com
+a devolução indicada como caminho; confirmar a devolução sem dizer quem recebeu
+é recusado; uma encomenda devolvida fica em `returned` com o COD cancelado; e a
+fatura ativa é assinalada sem ser alterada.
+
+---
+
 ## 4. Requisitos Não Funcionais
 
 ### Cópias de segurança e restauro
@@ -1479,7 +1549,8 @@ O que já existe está marcado; o que falta é o que a operação real ainda ped
 - [x] Portal do cliente e app do motorista com funcionamento offline (§ 3.6, § 3.25)
 - [x] Contratos por cliente: desconto, tarifa negociada por zona, frete mínimo, prazo de pagamento e limite de crédito, aplicados pelo sistema (§ 3.35)
 - [x] Inventário com idade da carga, contagem física e transferência entre filiais com manifesto e conferência (§ 3.36)
-- [ ] Reagendamento e devoluções como fluxo próprio (§ 3.26, § 3.27)
+- [x] Reagendamento com data acordada e teto de tentativas; devolução ao remetente com prova e COD cancelado (§ 3.37)
+- [ ] Ocorrências com SLA e escalonamento (§ 3.26) e logística reversa pedida pelo cliente (§ 3.27) — âmbitos distintos do § 3.37, ainda por implementar
 - [ ] Despacho automático (a atribuição é manual)
 - [ ] SMS, WhatsApp, email e push com provedores reais — hoje simulados fora do email
 

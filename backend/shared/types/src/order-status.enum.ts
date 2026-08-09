@@ -19,6 +19,10 @@ export enum OrderStatus {
   DELIVERED             = 'delivered',
   FAILED                = 'failed',
   CANCELLED             = 'cancelled',
+  // Devolvida ao remetente (spec § 3.37). Estado próprio e não `failed` — isso
+  // é uma tentativa — nem `cancelled`, que é uma encomenda que nunca chegou a
+  // seguir. Confundi-los tirava a única forma de contar quantas voltaram.
+  RETURNED              = 'returned',
 }
 
 /**
@@ -41,6 +45,9 @@ export const VALID_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
   [OrderStatus.DELIVERED]:            [],
   [OrderStatus.FAILED]:               [OrderStatus.IN_TRANSIT, OrderStatus.CANCELLED],
   [OrderStatus.CANCELLED]:            [],
+  // A encomenda chega de volta ao remetente — de viagem ou parada no armazém
+  // (spec § 3.37). Terminal, como DELIVERED: acabou, mas do outro lado.
+  [OrderStatus.RETURNED]:             [],
 };
 
 export function isValidTransition(from: OrderStatus, to: OrderStatus): boolean {

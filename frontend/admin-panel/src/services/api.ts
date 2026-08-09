@@ -25,6 +25,28 @@ export interface HistoryItem {
 export type PodMethod = 'signature' | 'photo' | 'signature_photo';
 export type DeliveryFailureReason = 'RECIPIENT_ABSENT' | 'WRONG_ADDRESS' | 'REFUSED' | 'OTHER';
 
+/** Motivos de devolução ao remetente (spec § 3.37). */
+export type ReturnReason = 'ATTEMPTS_EXHAUSTED' | 'REFUSED' | 'WRONG_ADDRESS' | 'SENDER_REQUEST' | 'OTHER';
+
+export const RETURN_REASON_LABELS: Record<ReturnReason, string> = {
+  ATTEMPTS_EXHAUSTED: 'Tentativas esgotadas',
+  REFUSED:            'Encomenda recusada',
+  WRONG_ADDRESS:      'Morada incorreta',
+  SENDER_REQUEST:     'Pedido do remetente',
+  OTHER:              'Outro motivo',
+};
+
+/** O que ficou registado na devolução — motivo, quem recebeu e a fatura ativa. */
+export interface ReturnInfo {
+  reason: ReturnReason;
+  notes?: string;
+  started_at: string;
+  received_by?: string;
+  received_at?: string;
+  has_signature?: boolean;
+  invoice_alert?: { invoice_id: string; number: string; status: string; total_cents: number; note: string };
+}
+
 /**
  * Comprovativo de entrega (spec § 3.28).
  *
@@ -68,6 +90,10 @@ export interface BackendOrder {
   cod?: CodCollection;
   value: number;
   history?: HistoryItem[];
+  // Reagendamento e devolução (spec § 3.37)
+  delivery_attempts?: number;
+  next_attempt_on?: string;
+  return_info?: ReturnInfo;
   created_at: string;
   updated_at: string;
 }
@@ -90,6 +116,11 @@ export interface Order {
   codStatus?: CodStatus;
   cod?: CodCollection;
   history?: HistoryItem[];
+  /** Tentativas de entrega já feitas (spec § 3.37). */
+  deliveryAttempts?: number;
+  /** Dia combinado para a nova tentativa, YYYY-MM-DD. */
+  nextAttemptOn?: string;
+  returnInfo?: ReturnInfo;
 }
 
 export interface CreateOrderData {
@@ -1380,6 +1411,9 @@ function mapBackendOrderToOrder(bo: BackendOrder): Order {
     codAmount: bo.cod_amount ?? 0,
     codStatus: bo.cod_status ?? 'none',
     cod: bo.cod,
+    deliveryAttempts: bo.delivery_attempts ?? 0,
+    nextAttemptOn: bo.next_attempt_on,
+    returnInfo: bo.return_info,
     history: (bo.history || []).map((item) => ({
       ...item,
       description: cleanDisplayText(item.description),
@@ -1649,6 +1683,32 @@ export const adminApi = {
     const raw = await fetchApi<BackendOrder>(`/orders/${id}/delivery-failure`, {
       method: 'POST',
       body: JSON.stringify({ reason, notes }),
+    });
+    return mapBackendOrderToOrder(raw);
+  },
+
+  // ─── Reagendamento e devolução ao remetente (spec § 3.37) ───────────────────
+
+  reagendarEntrega: async (id: string, scheduledFor: string, notes?: string): Promise<Order> => {
+    const raw = await fetchApi<BackendOrder>(`/orders/${id}/reschedule`, {
+      method: 'POST',
+      body: JSON.stringify({ scheduled_for: scheduledFor, notes }),
+    });
+    return mapBackendOrderToOrder(raw);
+  },
+
+  iniciarDevolucao: async (id: string, reason: ReturnReason, notes?: string): Promise<Order> => {
+    const raw = await fetchApi<BackendOrder>(`/orders/${id}/return`, {
+      method: 'POST',
+      body: JSON.stringify({ reason, notes }),
+    });
+    return mapBackendOrderToOrder(raw);
+  },
+
+  confirmarDevolucao: async (id: string, receivedBy: string, notes?: string): Promise<Order> => {
+    const raw = await fetchApi<BackendOrder>(`/orders/${id}/return/confirm`, {
+      method: 'POST',
+      body: JSON.stringify({ received_by: receivedBy, notes }),
     });
     return mapBackendOrderToOrder(raw);
   },

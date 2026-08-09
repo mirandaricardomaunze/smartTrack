@@ -67,6 +67,11 @@ function rowToOrder(row) {
     cod_settlement_id: row.cod_settlement_id ?? undefined,
     weight_grams:    row.weight_grams ?? undefined,
     pricing:         row.pricing ?? undefined,
+    // Reagendamento e devolução (§ 3.37). `?? 0` cobre a leitura de uma base
+    // onde a migração ainda não correu.
+    delivery_attempts: Number(row.delivery_attempts ?? 0),
+    next_attempt_on: dateOnly(row.next_attempt_on),
+    return_info:     row.return_info ?? undefined,
     value:           row.value,
     history:         row.history ?? [],
     created_at:      row.created_at instanceof Date
@@ -428,11 +433,28 @@ const OrderRepository = {
     const { meta: podMeta, images: podImages } = splitPod(order.pod);
     if (podImages) {
       return inTransaction(executor, async (tx) => {
-        await updateOrderRow(tx, order, podMeta);
+        const gravado = await updateOrderRow(tx, order, podMeta);
         await upsertPodImages(tx, order.id, podImages);
+        return gravado;
       });
     }
     return updateOrderRow(executor, order, podMeta);
+  },
+
+  /**
+   * Guarda a prova visual de uma devolução ao remetente (§ 3.37).
+   *
+   * Partilha `order_pod_images` com o comprovativo de entrega, e sem conflito:
+   * uma encomenda devolvida nunca chegou a ser entregue, logo não tem POD de
+   * entrega para sobrepor. A alternativa — uma segunda tabela idêntica — daria
+   * dois sítios para procurar "as imagens desta encomenda".
+   *
+   * @param {string} orderId
+   * @param {{ signature?: string, photo?: string }} images
+   */
+  async saveReturnImages(orderId, images) {
+    if (!images?.signature && !images?.photo) return;
+    await upsertPodImages(pool, orderId, images);
   },
 };
 
@@ -447,8 +469,9 @@ async function insertOrder(executor, order, podMeta) {
         id, client_id, client_phone, client_email, tracking_code, current_status,
         origin, destination, carrier_intl_id, driver_id, route_id, warehouse_id,
         pod, delivery_otp, cod_amount, cod_status, cod, cod_settlement_id,
-        value, history, created_at, updated_at, client_ref_id, weight_grams, pricing, company_id
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)
+        value, history, created_at, updated_at, client_ref_id, weight_grams, pricing, company_id,
+        delivery_attempts, next_attempt_on, return_info
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29)
       RETURNING *
     `, [
     order.id,
@@ -477,6 +500,9 @@ async function insertOrder(executor, order, podMeta) {
     order.weight_grams ?? null,
     order.pricing ? JSON.stringify(order.pricing) : null,
     order.company_id ?? writeCompanyId(),
+    order.delivery_attempts ?? 0,
+    order.next_attempt_on ?? null,
+    order.return_info ? JSON.stringify(order.return_info) : null,
   ]);
   return rowToOrder(rows[0]);
 }
@@ -500,9 +526,12 @@ async function updateOrderRow(executor, order, podMeta) {
     JSON.stringify(order.destination ?? {}),
     JSON.stringify(order.history ?? []),
     order.updated_at,
+    order.delivery_attempts ?? 0,
+    order.next_attempt_on ?? null,
+    order.return_info ? JSON.stringify(order.return_info) : null,
     order.id,
   ];
-  await executor.query(`
+  const { rows } = await executor.query(`
     UPDATE orders SET
       current_status    = $1,
       driver_id         = $2,
@@ -516,9 +545,17 @@ async function updateOrderRow(executor, order, podMeta) {
       cod_settlement_id = $10,
       destination       = $11,
       history           = $12,
-      updated_at        = $13
-    WHERE id = $14${companyClause(params)}
+      updated_at        = $13,
+      delivery_attempts = $14,
+      next_attempt_on   = $15,
+      return_info       = $16
+    WHERE id = $17${companyClause(params)}
+    RETURNING *
   `, params);
+  // Devolve o pedido gravado, e não `undefined` como antes. Sem isto, cada
+  // chamador tinha de manter uma cópia em memória do que julgava ter escrito —
+  // e um `return OrderRepository.update(...)` devolvia silenciosamente nada.
+  return rows.length ? rowToOrder(rows[0]) : undefined;
 }
 
 // ─── UserRepository ──────────────────────────────────────────────────────────
@@ -1310,6 +1347,26 @@ function isoOf(v) {
   return v instanceof Date ? v.toISOString() : v;
 }
 
+/**
+ * Converte uma coluna `DATE` para 'YYYY-MM-DD'.
+ *
+ * PORQUE NÃO `toISOString().slice(0, 10)`: o driver do Postgres devolve um
+ * `DATE` como um `Date` à MEIA-NOITE LOCAL. A leste de Greenwich, `toISOString`
+ * recua para o dia anterior — uma entrega combinada para dia 10 aparecia ao
+ * operador como dia 9. Ler as componentes locais é o que preserva o dia que foi
+ * escrito, e é isto que uma coluna sem hora significa.
+ *
+ * @param {Date|string|null|undefined} v
+ * @returns {string|undefined}
+ */
+function dateOnly(v) {
+  if (v == null) return undefined;
+  if (!(v instanceof Date)) return String(v).slice(0, 10);
+  const mes = String(v.getMonth() + 1).padStart(2, '0');
+  const dia = String(v.getDate()).padStart(2, '0');
+  return `${v.getFullYear()}-${mes}-${dia}`;
+}
+
 function rowToSupportThread(row) {
   return {
     id:                 row.id,
@@ -1715,7 +1772,7 @@ function rowToInvoice(row) {
     issued_by:      row.issued_by ?? undefined,
     // Vencimento acordado no contrato (§ 3.35). Ausente numa fatura-recibo de
     // pronto pagamento — ver a nota em `dueDateFrom`.
-    due_date:       row.due_date instanceof Date ? row.due_date.toISOString().slice(0, 10) : (row.due_date ?? undefined),
+    due_date:       dateOnly(row.due_date),
     // Retificação (NC/ND)
     related_invoice_id: row.related_invoice_id ?? undefined,
     related_number: row.related_number ?? undefined,
@@ -2273,9 +2330,9 @@ function rowToContract(row) {
     code:                 row.code,
     status:               row.status,
     // DATE volta do driver como Date; a camada de aplicação compara strings
-    // YYYY-MM-DD, e converter aqui evita que cada chamador se lembre de o fazer.
-    starts_on:            row.starts_on instanceof Date ? row.starts_on.toISOString().slice(0, 10) : row.starts_on,
-    ends_on:              row.ends_on instanceof Date ? row.ends_on.toISOString().slice(0, 10) : (row.ends_on ?? null),
+    // YYYY-MM-DD. Ver `dateOnly` para o porquê de não ser `toISOString`.
+    starts_on:            dateOnly(row.starts_on),
+    ends_on:              dateOnly(row.ends_on) ?? null,
     discount_pct:         Number(row.discount_pct),
     minimum_charge_cents: Number(row.minimum_charge_cents),
     payment_terms_days:   Number(row.payment_terms_days),
@@ -3457,4 +3514,4 @@ const HrPortalRepository = {
   ]);return{profile:profile.rows[0],leave_balance:balances.rows[0]||null,attendance:attendance.rows,leaves:leaves.rows,time_bank_minutes:Number(timeBank.rows[0]?.balance_minutes||0),time_bank:timeBank.rows,documents:documents.rows,trainings:trainings.rows,benefits:benefits.rows.map(r=>({...r,amount_cents:Number(r.amount_cents),balance_cents:Number(r.balance_cents)})),performance:performance.rows,payslips:payslips.rows.map(r=>({...r,base_salary_cents:Number(r.base_salary_cents),gross_cents:Number(r.gross_cents),deductions_cents:Number(r.deductions_cents),net_cents:Number(r.net_cents)}))};}
 };
 
-module.exports = { OrderRepository, DriverRepository, UserRepository, UserLocationRepository, WarehouseRepository, SettlementRepository, SupportRepository, ClientRepository, ContractRepository, TransferRepository, CountRepository, PricingRepository, InvoiceRepository, DocumentSeriesRepository, AuditRepository, PasswordResetRepository, CompanyRepository, CompanyProfileRepository, PlanRepository, SubscriptionRepository, UsageRepository, SubscriptionInvoiceRepository, HrRepository, HrOperationsRepository, HrPortalRepository, FinanceRepository, FleetRepository };
+module.exports = { dateOnly, OrderRepository, DriverRepository, UserRepository, UserLocationRepository, WarehouseRepository, SettlementRepository, SupportRepository, ClientRepository, ContractRepository, TransferRepository, CountRepository, PricingRepository, InvoiceRepository, DocumentSeriesRepository, AuditRepository, PasswordResetRepository, CompanyRepository, CompanyProfileRepository, PlanRepository, SubscriptionRepository, UsageRepository, SubscriptionInvoiceRepository, HrRepository, HrOperationsRepository, HrPortalRepository, FinanceRepository, FleetRepository };

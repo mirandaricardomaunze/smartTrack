@@ -23,6 +23,8 @@ const OrderStatus = Object.freeze({
   DELIVERED:            'delivered',
   FAILED:               'failed',
   CANCELLED:            'cancelled',
+  // Devolvida ao remetente (spec § 3.37) — ver a nota no enum canónico.
+  RETURNED:             'returned',
 });
 
 /** @type {Record<string, string[]>} */
@@ -41,6 +43,8 @@ const VALID_TRANSITIONS = Object.freeze({
   [OrderStatus.DELIVERED]:            [],
   [OrderStatus.FAILED]:               [OrderStatus.IN_TRANSIT, OrderStatus.CANCELLED],
   [OrderStatus.CANCELLED]:            [],
+  // Terminal, como DELIVERED: acabou, mas do outro lado (spec § 3.37).
+  [OrderStatus.RETURNED]:             [],
 });
 
 /**

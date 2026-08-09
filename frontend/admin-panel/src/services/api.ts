@@ -1055,6 +1055,70 @@ export interface DispatchPlan {
   summary: { eligible_orders: number; planned_orders: number; unassigned: number; drivers_used: number };
 }
 
+// ─── Dashboard operacional (spec § 3.39) ─────────────────────────────────────
+
+export interface OperationsSummary {
+  orders: {
+    total: number;
+    open: number;
+    delivered: number;
+    failed: number;
+    returned: number;
+    at_warehouse: number;
+    moving: number;
+    /** Sobre o que já terminou. `null` quando nada terminou ainda. */
+    success_rate_pct: number | null;
+    /** Só o que foi entregue — o que está a caminho ainda pode voltar. */
+    revenue_cents: number;
+  };
+  cod: { pending_orders: number; collected_cents: number };
+  fleet: { total: number; available: number; on_route: number };
+  thresholds: { stale_warehouse_days: number; stale_transit_days: number };
+}
+
+export type OperationExceptionKind =
+  | 'failed_without_decision'
+  | 'overdue_reschedule'
+  | 'stale_in_warehouse'
+  | 'stale_in_transit'
+  | 'transfer_missing_items'
+  | 'credit_limit_exceeded';
+
+export interface OperationException {
+  kind: OperationExceptionKind;
+  entity_id: string;
+  label: string;
+  age_days: number;
+  detail: string;
+  /** Calculada no servidor: espécie + tempo parado. Ordena a fila. */
+  severity: number;
+}
+
+export interface OperationsExceptions {
+  exceptions: OperationException[];
+  counts: Partial<Record<OperationExceptionKind, number>>;
+  total: number;
+}
+
+export const EXCEPTION_LABELS: Record<OperationExceptionKind, string> = {
+  overdue_reschedule:      'Reagendamento vencido',
+  failed_without_decision: 'Insucesso sem decisão',
+  transfer_missing_items:  'Transferência com falhas',
+  stale_in_transit:        'Parada em trânsito',
+  credit_limit_exceeded:   'Limite de crédito',
+  stale_in_warehouse:      'Parada no armazém',
+};
+
+/** Onde se resolve cada espécie — uma exceção sem destino é só um aviso. */
+export const EXCEPTION_TARGET: Record<OperationExceptionKind, string> = {
+  overdue_reschedule:      '/pedidos',
+  failed_without_decision: '/pedidos',
+  transfer_missing_items:  '/armazens',
+  stale_in_transit:        '/pedidos',
+  credit_limit_exceeded:   '/clientes',
+  stale_in_warehouse:      '/armazens',
+};
+
 /** Shape cru devolvido por GET /v1/routes (proxy para o routes-service). */
 export interface BackendRouteStop {
   order_id: string;
@@ -1631,6 +1695,17 @@ export const adminApi = {
   },
 
   getOrdersStats: (): Promise<OrdersStatsResponse> => fetchApi<OrdersStatsResponse>('/orders/stats'),
+
+  // ─── Dashboard operacional (spec § 3.39) ────────────────────────────────────
+  // Contado na base, sobre a empresa inteira. O painel NÃO deve voltar a somar
+  // listas no navegador: com paginação, isso descreve uma amostra e apresenta-a
+  // como o retrato da operação.
+
+  getOperationsSummary: (): Promise<OperationsSummary> =>
+    fetchApi<OperationsSummary>('/operations/summary'),
+
+  getOperationsExceptions: (): Promise<OperationsExceptions> =>
+    fetchApi<OperationsExceptions>('/operations/exceptions'),
   
   createPedido: async (order: CreateOrderData): Promise<Order> => {
     const payload = {

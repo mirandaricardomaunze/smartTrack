@@ -1308,6 +1308,66 @@ motivo; e confirmar produz exatamente as rotas propostas.
 
 ---
 
+### 3.39 Dashboard operacional
+
+O painel existia e **mentia**. Carregava a primeira página de encomendas (200) e
+contava sobre ela no navegador: numa empresa com mais do que isso, os
+indicadores, a distribuição por estado e a lista "Requer Atenção" descreviam uma
+amostra e apresentavam-se como o retrato da operação. Um número errado com ar de
+autoridade é pior do que número nenhum — leva a decidir com confiança sobre algo
+que não é verdade.
+
+**Duas regras governam esta secção:**
+
+1. **Contar é trabalho da base de dados.** Nenhum indicador é calculado sobre uma
+   página. As contagens vêm de SQL sobre a empresa inteira, com o mesmo filtro de
+   `company_id` do resto do sistema (§ 2.4).
+2. **Um painel operacional mostra o que exige uma decisão**, não gráficos. Cada
+   linha diz o que está mal, há quanto tempo, e leva ao sítio onde se resolve. Um
+   gráfico bonito que ninguém usa é a forma mais cara de não fazer nada.
+
+**As exceções, e porque cada uma está aqui.** Só entram situações que ficaram
+paradas à espera de uma pessoa — não estados normais do percurso:
+
+- **Entregas falhadas sem decisão.** Falhou, e ninguém reagendou nem mandou
+  devolver. É a fila que cresce em silêncio: a encomenda não está a andar e não
+  há nada agendado que a faça andar.
+- **Reagendamentos vencidos.** A data combinada passou e a encomenda continua por
+  entregar. O cliente ficou à espera num dia que já foi — é a falha que mais
+  destrói confiança, e era invisível antes de o § 3.37 pôr a data no pedido.
+- **Carga parada no armazém** para lá do limite (§ 3.36). Ocupa espaço que nega
+  outra encomenda.
+- **Em trânsito há demasiado tempo.** Saiu e não chegou a lado nenhum: ou
+  perdeu-se, ou alguém se esqueceu de dar entrada.
+- **Transferências com encomendas em falta** (§ 3.36). Já conferidas, com
+  divergência por resolver.
+- **Clientes acima do limite de crédito** (§ 3.35). Novas encomendas estão a ser
+  recusadas — quem atende precisa de saber antes de o cliente telefonar.
+
+**Limiares configuráveis, com defaults defensáveis** (`OPS_STALE_WAREHOUSE_DAYS`
+7, `OPS_STALE_TRANSIT_DAYS` 3). São a fronteira entre "está a andar" e "alguém
+tem de ir ver", e variam com a operação — fixá-los no código obrigaria a um
+deploy para afinar um alarme.
+
+**Severidade calculada, não escrita à mão.** A ordem por que as exceções
+aparecem sai de uma função pura: quanto mais tempo parado e quanto mais perto do
+cliente final, mais acima. Uma lista por ordem de chegada faz o urgente
+desaparecer debaixo do trivial.
+
+- **Backend (`/v1/operations`, RBAC ADMIN/SUPPORT):** `GET /summary` (contagens
+  agregadas em SQL) e `GET /exceptions` (as filas acima, cada uma com o seu
+  motivo e antiguidade).
+- **Frontend admin (`/dashboard`):** os indicadores passam a vir do `/summary`;
+  a secção de exceções substitui a antiga "Requer Atenção", que só via a primeira
+  página e só conhecia dois estados. Sem emojis.
+
+**Critérios de aceitação:** os números não mudam quando a paginação muda; uma
+encomenda falhada e já reagendada **não** aparece como pendente de decisão; um
+reagendamento cuja data passou aparece; os limiares respondem ao ambiente; e cada
+exceção traz identificador, antiguidade e motivo.
+
+---
+
 ## 4. Requisitos Não Funcionais
 
 ### Cópias de segurança e restauro
@@ -1639,7 +1699,7 @@ O que já existe está marcado; o que falta é o que a operação real ainda ped
 - [x] Multiempresa (§ 2.4)
 - [x] Relatórios exportáveis em PDF e CSV (§ 3.17, § 3.20)
 - [x] Contas a receber e a pagar como lançamentos com vencimento e saldo (§ 3.17)
-- [ ] Dashboard operacional em tempo real
+- [x] Dashboard operacional: indicadores contados em SQL sobre a empresa inteira e fila de exceções ordenada por severidade (§ 3.39). **Corrigiu um painel que contava sobre a primeira página de encomendas e apresentava o resultado como o retrato da operação**
 - [ ] Custos e rentabilidade por pedido, rota, cliente e viatura (§ 3.30)
 - [ ] Contas a receber **por cliente**, ligadas às faturas — hoje o lançamento é avulso
 - [ ] SLA e ocorrências (§ 3.26)

@@ -1533,6 +1533,59 @@ correr; e o histórico de transições não pode ser alterado nem apagado.
 
 ---
 
+### 3.43 Desempenho dos motoristas
+
+Implementa o § 3.7, que existia como número e não como medição.
+
+**O que estava errado.** Cada motorista nascia com `punctuality: 100`,
+`success_rate: 100`, `customer_rating: 5` e `total_deliveries: 0` — valores
+escritos à mão no cadastro e **nunca recalculados**. Um motorista com dez
+insucessos continuava a exibir 100% de sucesso. Pior do que não ter indicador:
+um número com ar de medição a dizer o contrário da realidade, no ecrã onde se
+decide quem fica com as melhores rotas.
+
+**A avaliação do cliente foi REMOVIDA, não corrigida.** Nunca existiu nada no
+sistema que pedisse ao destinatário para avaliar a entrega — nem no portal, nem
+no POD, nem por mensagem. Os 5,0 eram inteiramente inventados. Um sistema de
+avaliação é uma funcionalidade por si (recolha, momento, prevenção de abuso), e
+enquanto não existir o campo desaparece. Mostrar `—` é honesto; mostrar 5,0 é
+uma mentira que alguém vai usar para promover ou despedir.
+
+**Calculado da fonte, nunca guardado.** Os indicadores derivam das encomendas e
+são calculados na leitura. Guardá-los numa coluna criaria um número que envelhece
+em silêncio — que é exatamente o defeito que esta secção corrige. `drivers`
+mantém a coluna por compatibilidade, mas deixa de ser lida para efeitos de
+desempenho.
+
+**Os indicadores, e o que cada um significa:**
+- **Entregas** — quantas concluiu. É a base de tudo o resto.
+- **Taxa de sucesso** — entregues sobre entregues + insucessos + devolvidas.
+  Apenas sobre encomendas **atribuídas a ele** (§ 3.34): sem essa atribuição o
+  denominador seria a operação inteira.
+- **Sucesso à primeira** — entregues sem reagendamento pelo caminho (§ 3.37). É
+  o indicador que distingue um motorista que resolve de um que volta lá três
+  vezes, e o único que a taxa de sucesso sozinha esconde.
+- **Pontualidade** — entregas dentro do prazo acordado, **só onde há prazo**
+  (§ 3.42). Numa operação sem SLA definido vem `null`, não 100%.
+- **COD por acertar** — valor cobrado e ainda não entregue à empresa (§ 3.5).
+  Não é qualidade de serviço, é exposição de caixa, e por isso aparece separado.
+
+**Um motorista sem entregas não tem taxa nenhuma.** Todas as percentagens vêm
+`null` com `sample_size: 0`. Uma taxa de 0% para quem começou ontem é uma
+acusação, e uma de 100% para quem fez uma entrega é um elogio sem base.
+
+- **Backend (`/v1/drivers/performance`, RBAC ADMIN/SUPPORT):** ranking e
+  `GET /v1/drivers/:id/performance` para o detalhe. Janela `from`/`to`.
+- **Frontend admin (`/motoristas`):** os indicadores no detalhe do motorista,
+  com `—` onde não há amostra. Sem emojis.
+
+**Critérios de aceitação:** um motorista sem entregas apresenta `null` em todas
+as taxas; um insucesso baixa a taxa de sucesso; uma entrega reagendada não conta
+como sucesso à primeira; sem prazo acordado a pontualidade é `null`; e não existe
+nenhum campo de avaliação do cliente enquanto não houver recolha.
+
+---
+
 ## 4. Requisitos Não Funcionais
 
 ### Cópias de segurança e restauro
@@ -1868,7 +1921,7 @@ O que já existe está marcado; o que falta é o que a operação real ainda ped
 - [x] Rentabilidade por pedido, rota, cliente e viatura, com o combustível MEDIDO dos abastecimentos e a cobertura de custos declarada em cada resposta (§ 3.40)
 - [x] Contas a receber por cliente, ligadas às faturas, com antiguidade da dívida por escalões contados a partir do vencimento (§ 3.41)
 - [x] SLA de entrega com prazo acordado por zona e ocorrências com dono, prazo e histórico imutável (§ 3.42, implementa o § 3.26)
-- [ ] Desempenho dos motoristas a partir de dados reais (§ 3.7 — hoje o motorista nasce com 100% de pontualidade e sucesso, valores que nunca são recalculados a partir das entregas)
+- [x] Desempenho dos motoristas medido das encomendas, com `null` onde não há amostra e sem a avaliação de cliente que nunca foi recolhida (§ 3.43, implementa o § 3.7)
 - [ ] Exportação para Excel (o CSV abre no Excel, mas não leva formatação nem várias folhas)
 - [ ] Multifilial
 

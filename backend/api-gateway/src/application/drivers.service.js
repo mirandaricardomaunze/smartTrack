@@ -129,7 +129,12 @@ async function createDriver(dto = {}, context = {}) {
     vehicle: { type, plate, capacity_kg, licence_category },
     // Sem acesso à aplicação ainda não pode estar disponível para rota.
     current_status: 'offline',
-    performance_metrics: { punctuality: 100, success_rate: 100, customer_rating: 5, total_deliveries: 0 },
+    // Vazio, e não 100% de tudo. Um motorista recém-criado não tem
+    // desempenho — tem falta de amostra, e é isso que o § 3.43 mostra. Os
+    // indicadores passaram a ser calculados das encomendas em
+    // `driver-performance.service`; esta coluna fica só por compatibilidade
+    // com quem ainda a lê.
+    performance_metrics: {},
   });
 
   await audit.record({

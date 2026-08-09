@@ -1055,6 +1055,31 @@ export interface DispatchPlan {
   summary: { eligible_orders: number; planned_orders: number; unassigned: number; drivers_used: number };
 }
 
+// ─── Desempenho dos motoristas (spec § 3.43) ─────────────────────────────────
+
+/**
+ * NÃO tem `customer_rating`: nunca existiu recolha de avaliações no sistema, e
+ * os 5,0 que o cadastro mostrava eram inventados.
+ */
+export interface DriverPerformance {
+  driver_id: string;
+  driver_name?: string;
+  current_status?: string | null;
+  deliveries: number;
+  failures: number;
+  returns: number;
+  in_progress: number;
+  /** `null` sem amostra — 0% para quem começou ontem seria uma acusação. */
+  success_rate_pct: number | null;
+  first_attempt_rate_pct: number | null;
+  /** `null` enquanto nenhuma zona tiver prazo acordado (§ 3.42). */
+  punctuality_pct: number | null;
+  sample_size: number;
+  punctuality_sample: number;
+  /** Exposição de caixa, não qualidade de serviço. */
+  unsettled_cod_cents: number;
+}
+
 // ─── SLA e ocorrências (spec § 3.42) ─────────────────────────────────────────
 
 export interface SlaSummary {
@@ -1888,6 +1913,16 @@ export const adminApi = {
   // ─── SLA e ocorrências (spec § 3.42) ────────────────────────────────────────
 
   getSlaSummary: (): Promise<SlaSummary> => fetchApi('/sla/summary'),
+
+  // ─── Desempenho dos motoristas (spec § 3.43) ────────────────────────────────
+  // Calculado das encomendas. O cadastro tinha valores fixos que nunca eram
+  // recalculados — não são usados.
+
+  getDesempenhoMotoristas: (): Promise<{ drivers: DriverPerformance[] }> =>
+    fetchApi('/drivers/performance'),
+
+  getDesempenhoMotorista: (id: string): Promise<DriverPerformance> =>
+    fetchApi(`/drivers/${encodeURIComponent(id)}/performance`),
 
   getOcorrencias: (status?: string): Promise<Occurrence[]> =>
     fetchApi(`/incidents${status ? `?status=${encodeURIComponent(status)}` : ''}`),

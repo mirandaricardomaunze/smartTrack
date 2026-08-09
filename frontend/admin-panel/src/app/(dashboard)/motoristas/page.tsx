@@ -19,6 +19,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { adminApi, type BackendDriver, type DeliveryModalCode, type DeliveryModalSpec } from '@/services/api';
 import { Button, Card, Input, Pagination, Select, StatCard, paginationMeta } from '@/components/ui';
+import DesempenhoMotoristas from '@/components/DesempenhoMotoristas';
 
 interface DriverRow {
   id: string;
@@ -75,12 +76,6 @@ function toRow(driver: BackendDriver): DriverRow {
     totalEntregas: driver.performance_metrics?.total_deliveries ?? 0,
     temAcesso: driver.has_access === true,
   };
-}
-
-/** Média de uma métrica, ou null quando não há de quem tirar média. */
-function average(rows: DriverRow[], pick: (row: DriverRow) => number): number | null {
-  if (rows.length === 0) return null;
-  return rows.reduce((total, row) => total + pick(row), 0) / rows.length;
 }
 
 export default function MotoristasPage() {
@@ -148,8 +143,10 @@ export default function MotoristasPage() {
   const visibleMotoristas = filteredMotoristas.slice((pageMeta.currentPage - 1) * pageSize, pageMeta.currentPage * pageSize);
 
   const semAcesso = motoristas.filter((motorista) => !motorista.temAcesso).length;
-  const notaMedia = average(motoristas, (row) => row.notaCliente);
-  const sucessoMedio = average(motoristas, (row) => row.taxaSucesso);
+  // `notaCliente` e `taxaSucesso` vinham de `performance_metrics`, escrito à mão
+  // no cadastro e nunca recalculado — davam 100% de sucesso a toda a gente para
+  // sempre, e uma avaliação de cliente que nunca foi recolhida. As médias que
+  // dependiam deles saíram; o desempenho real está na tabela abaixo (§ 3.43).
 
   async function handleCreateDriver(event: React.FormEvent) {
     event.preventDefault();
@@ -217,17 +214,10 @@ export default function MotoristasPage() {
             {semAcesso > 0 ? 'Não conseguem executar entregas' : 'Todos com acesso criado'}
           </span>}
         />
-        <StatCard
-          label="Avaliação Média"
-          value={notaMedia === null ? '—' : `${notaMedia.toFixed(1)} / 5.0`}
-          helper={<span className="text-xs text-slate-500">Média dos motoristas registados</span>}
-        />
-        <StatCard
-          label="Sucesso na 1.ª Tentativa"
-          value={sucessoMedio === null ? '—' : `${sucessoMedio.toFixed(1)}%`}
-          helper={<span className="text-xs text-slate-500">Média dos indicadores registados</span>}
-        />
       </div>
+
+      {/* Desempenho medido das encomendas (§ 3.43). */}
+      <DesempenhoMotoristas />
 
       <Card className="flex flex-col md:flex-row gap-4 justify-between items-center">
         <Input

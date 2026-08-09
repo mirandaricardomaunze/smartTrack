@@ -27,6 +27,7 @@ const {
 } = require('../application/drivers.service');
 
 const { DriverRepository } = require('../infrastructure/pg.repository');
+const driverPerformance = require('../application/driver-performance.service');
 
 const {
   requireAuth,
@@ -129,6 +130,32 @@ router.put('/:id/gps', requireAuth, requireSelfOrRoles(['ADMIN']), async (req, r
     res.json(result);
   } catch (err) {
     handleError(err, res);
+  }
+});
+
+// ─── Desempenho (spec § 3.43) ─────────────────────────────────────────────────
+// Calculado das encomendas, não lido do cadastro: os valores que lá estavam
+// eram fixos e nunca foram recalculados.
+//
+// Declarado ANTES de qualquer rota `/:id`, ou o Express casaria "performance"
+// como um identificador de motorista.
+router.get('/performance', requireAuth, requireRoles(['ADMIN', 'SUPPORT']), async (req, res) => {
+  try {
+    res.json(await driverPerformance.getDriversPerformance({ from: req.query.from, to: req.query.to }));
+  } catch (err) {
+    console.error('[drivers.router] Erro inesperado:', err.message);
+    res.status(500).json({ error: 'Erro interno do servidor.' });
+  }
+});
+
+router.get('/:id/performance', requireAuth, requireRoles(['ADMIN', 'SUPPORT']), async (req, res) => {
+  try {
+    res.json(await driverPerformance.getDriverPerformance(req.params.id, {
+      from: req.query.from, to: req.query.to,
+    }));
+  } catch (err) {
+    console.error('[drivers.router] Erro inesperado:', err.message);
+    res.status(500).json({ error: 'Erro interno do servidor.' });
   }
 });
 

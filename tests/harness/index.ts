@@ -60,6 +60,8 @@ export { OperationsFactory } from './factories/operations.factory';
 export { ProfitabilityFactory } from './factories/profitability.factory';
 export { ReceivablesFactory, HOJE as RECEIVABLES_TODAY } from './factories/receivables.factory';
 export { SlaFactory, AGORA as SLA_NOW } from './factories/sla.factory';
+export type { TestPerformanceOrder } from './factories/driver-performance.factory';
+export { DriverPerformanceFactory } from './factories/driver-performance.factory';
 
 // Percursos (conduzem vários módulos pela ordem da operação, não geram dados)
 export { DeliveryJourney } from './journeys/delivery-journey';

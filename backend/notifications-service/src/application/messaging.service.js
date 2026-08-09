@@ -17,11 +17,13 @@ const crypto = require('crypto');
 const { OutboundMessageRepository } = require('../infrastructure/pg.repository');
 const { getSmsClient, isSimulated: smsIsSimulated } = require('../infrastructure/sms.client');
 const { getEmailClient, isSimulated: emailIsSimulated } = require('../infrastructure/email.client');
+const { getWhatsAppClient, isSimulated: whatsappIsSimulated } = require('../infrastructure/whatsapp.client');
 
 const DEFAULT_PORTS = Object.freeze({
-  repo:     OutboundMessageRepository,
-  getSms:   getSmsClient,
-  getEmail: getEmailClient,
+  repo:        OutboundMessageRepository,
+  getSms:      getSmsClient,
+  getEmail:    getEmailClient,
+  getWhatsApp: getWhatsAppClient,
 });
 
 let ports = { ...DEFAULT_PORTS };
@@ -86,6 +88,35 @@ async function sendClientMessage(dto) {
     if (saved) results.push(saved);
   }
 
+  // ── WhatsApp ─────────────────────────────────────────────────────────────
+  // Usa o mesmo `to_phone` do SMS: é o mesmo número, e pedir dois campos ao
+  // chamador só produziria dois sítios onde o número pode divergir.
+  //
+  // Vai por TEMPLATE e não por texto livre — ver a nota sobre a janela de 24
+  // horas em whatsapp.client.js. Uma notificação de logística é quase sempre
+  // fora da janela, e texto livre aí não chega ao destinatário.
+  if (channels.includes('whatsapp') && dto.to_phone) {
+    let res;
+    try {
+      res = await ports.getWhatsApp().send({ to: dto.to_phone, message: body });
+    } catch (err) {
+      res = { ok: false, status: 'failed', provider: 'META_CLOUD', message: err.message };
+    }
+    const saved = await recordOutbound({
+      id:                  generateMessageId('whatsapp'),
+      channel:             'whatsapp',
+      recipient:           dto.to_phone,
+      body,
+      status:              res.status,
+      provider:            res.provider,
+      provider_message_id: res.providerMessageId,
+      order_id:            dto.order_id,
+      tracking_code:       dto.tracking_code,
+      error:               res.ok ? undefined : res.message,
+    });
+    if (saved) results.push(saved);
+  }
+
   // ── Email ────────────────────────────────────────────────────────────────
   if (channels.includes('email') && dto.to_email) {
     let res;
@@ -126,11 +157,12 @@ async function getMessagingStats() {
   return ports.repo.getStats();
 }
 
-/** @returns {{ sms: { simulated: boolean }, email: { simulated: boolean } }} */
+/** @returns {{ sms: object, whatsapp: object, email: object }} */
 function getProviderInfo() {
   return {
-    sms:   { simulated: smsIsSimulated() },
-    email: { simulated: emailIsSimulated() },
+    sms:      { simulated: smsIsSimulated() },
+    whatsapp: { simulated: whatsappIsSimulated() },
+    email:    { simulated: emailIsSimulated() },
   };
 }
 

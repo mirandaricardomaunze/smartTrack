@@ -155,6 +155,22 @@ listagem paginada, o código lido pode não estar na página aberta.
 - Sem SDK `firebase-admin`: a autenticação é o fluxo JWT-bearer de service account, que o `crypto` do Node assina, e o envio é um POST. O SDK traria dezenas de MB de dependências para fazer duas chamadas, e os restantes adaptadores (email, SMS, 17TRACK) já falam HTTP directo.
 - **Limpeza de tokens mortos:** o FCM responde `UNREGISTERED`/`INVALID_ARGUMENT` (400) ou 404 quando a app foi desinstalada ou o token rodou. Só esses são devolvidos em `invalidTokens` e removidos da base. Um 429, 500 ou 503 — e qualquer falha de rede — **não** invalida o token: apagá-lo por uma indisponibilidade passageira seria perder um dispositivo bom e degradar a entrega em silêncio.
 - A API HTTP v1 não tem multicast: é um pedido por token, enviados em lotes concorrentes. Um token morto no meio do lote não impede a entrega aos restantes.
+- **Canal WhatsApp** (WhatsApp Business Cloud API, da Meta). Simulado por default; real com
+  `WHATSAPP_PHONE_NUMBER_ID` + `WHATSAPP_ACCESS_TOKEN`. Duas regras da plataforma governam o
+  adaptador e explicam porque não é um `fetch` de três linhas:
+  - **Janela de 24 horas.** Texto livre só é aceite nas 24 horas seguintes à última mensagem *que o
+    cliente enviou*; fora dela a Meta recusa com o erro 131047 e nada chega. Uma notificação de
+    logística está quase sempre fora da janela, pelo que o adaptador envia **template** por omissão
+    e o texto livre é uma escolha explícita de quem chama. Ao contrário, teríamos um canal a
+    responder "enviado" sem entregar — a falha que a § 3.24 existe para impedir.
+  - **O número vai só com dígitos e indicativo.** Um número guardado como `+258 84 123 4567` — que é
+    como as pessoas o escrevem — é recusado. A normalização vive no adaptador, não em cada chamador,
+    e um número que não sobreviva a ela é recusado **antes** de tocar na rede.
+  - Os erros da Meta são traduzidos para algo acionável (janela, template não aprovado, token
+    expirado, destino sem WhatsApp): a mensagem original fala de *re-engagement* e não de templates,
+    e quem lê o log não percebe porque é que "enviou" e não chegou.
+  - Usa o mesmo `client_phone` do SMS: é o mesmo número, e dois campos só produziriam dois sítios
+    onde ele pode divergir.
 - **Canais SMS e email:** além do push, o cliente pode ser avisado por **SMS e email** (o pedido
   guarda `client_phone`/`client_email`, capturados no cadastro). Clientes simulados por default e
   **reais quando configurados por ambiente** (`SMS_API_URL`/`SMS_API_KEY`; `EMAIL_API_URL`/
@@ -1611,7 +1627,8 @@ O que já existe está marcado; o que falta é o que a operação real ainda ped
 - [x] Reagendamento com data acordada e teto de tentativas; devolução ao remetente com prova e COD cancelado (§ 3.37)
 - [ ] Ocorrências com SLA e escalonamento (§ 3.26) e logística reversa pedida pelo cliente (§ 3.27) — âmbitos distintos do § 3.37, ainda por implementar
 - [x] Despacho automático: propõe a distribuição por motorista respeitando capacidade, disponibilidade e datas reagendadas; confirma pelo caminho validado (§ 3.38)
-- [ ] SMS, WhatsApp, email e push com provedores reais — hoje simulados fora do email
+- [x] Adaptadores reais dos quatro canais escritos e testados contra duplos: push (FCM v1), email (Resend/HTTP), SMS (HTTP) e **WhatsApp** (Cloud API da Meta) — § 3.3
+- [ ] **Ativação** dos canais: depende de credenciais e de um domínio verificado, que não são decisão técnica. Enquanto não existirem, os canais ficam simulados e o alerta de "provedores simulados em produção" (§ 3.31) dispara — que é exatamente o que deve acontecer
 
 ### Prioridade 3 — controlo empresarial
 

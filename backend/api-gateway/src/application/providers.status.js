@@ -39,6 +39,11 @@ const REGISTRY = [
     load: () => require('../../../notifications-service/src/infrastructure/sms.client'),
   },
   {
+    name: 'whatsapp',
+    env_hint: 'WHATSAPP_PHONE_NUMBER_ID + WHATSAPP_ACCESS_TOKEN (+ WHATSAPP_TEMPLATE_NAME aprovado)',
+    load: () => require('../../../notifications-service/src/infrastructure/whatsapp.client'),
+  },
+  {
     name: 'push',
     env_hint: 'FIREBASE_PROJECT_ID + FIREBASE_CLIENT_EMAIL + FIREBASE_PRIVATE_KEY',
     load: () => require('../../../notifications-service/src/infrastructure/fcm.client'),

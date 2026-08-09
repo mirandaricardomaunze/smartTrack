@@ -25,7 +25,9 @@ const {
   InvalidRouteTransitionError,
 } = require('../../../routes-service/src/application/routes.service');
 
-const { assertRouteFitsDriver, assignRouteOrders, DispatchError } = require('../application/dispatch.service');
+const {
+  assertRouteFitsDriver, assignRouteOrders, planAutomaticDispatch, DispatchError,
+} = require('../application/dispatch.service');
 
 const router = Router();
 const requireAssignedRoute = requireResourceOwnerOrRoles(
@@ -67,6 +69,31 @@ router.get('/me', requireAuth, requireRoles(['DRIVER']), async (req, res) => {
 router.post('/optimize', requireAuth, requireRoles(['ADMIN']), (req, res) => {
   try { res.json(previewOptimization(req.body ?? {})); }
   catch (err) { handleError(err, res); }
+});
+
+// ─── Despacho automático (spec § 3.38) ────────────────────────────────────────
+// PROPÕE, não executa. Um sistema que cria rotas sozinho é, na prática, uma
+// forma de ninguém olhar: quando a proposta estiver errada, a carga já saiu.
+
+router.post('/dispatch/plan', requireAuth, requireRoles(['ADMIN']), async (req, res) => {
+  try { res.json(await planAutomaticDispatch(req.body ?? {})); }
+  catch (err) { handleError(err, res); }
+});
+
+router.post('/dispatch/confirm', requireAuth, requireRoles(['ADMIN']), async (req, res) => {
+  try {
+    // Confirmar passa pelo MESMO caminho do despacho manual — verificação de
+    // carga e atribuição incluídas. O automático não é uma porta lateral que
+    // salta as validações.
+    const criadas = [];
+    for (const proposta of req.body?.routes ?? []) {
+      if (proposta.driver_id) await assertRouteFitsDriver(proposta.driver_id, proposta.stops ?? []);
+      const route = await createRoute({ driver_id: proposta.driver_id, stops: proposta.stops, origin: req.body?.origin });
+      const assignment = await assignRouteOrders(route);
+      criadas.push({ ...route, assignment });
+    }
+    res.status(201).json({ routes: criadas, created: criadas.length });
+  } catch (err) { handleError(err, res); }
 });
 
 router.post('/', requireAuth, requireRoles(['ADMIN']), async (req, res) => {

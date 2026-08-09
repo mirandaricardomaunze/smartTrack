@@ -197,10 +197,277 @@ async function assignRouteOrders(route) {
   return { assigned, skipped };
 }
 
+// ─── Despacho automático (spec § 3.38) ───────────────────────────────────────
+
+const { haversineKm } = require('../../../routes-service/src/domain/optimizer');
+
+/** Estados a partir dos quais uma encomenda pode sair para entrega. */
+const DISPATCHABLE_STATUSES = ['at_warehouse', 'collected'];
+
+/**
+ * A encomenda pode entrar numa rota hoje? PURA.
+ *
+ * Devolve o motivo da recusa em vez de um booleano: um plano que esconde as
+ * sobras deixa encomendas paradas sem ninguém saber porquê.
+ *
+ * @param {object} order
+ * @param {string} today YYYY-MM-DD
+ * @returns {{ ok: boolean, reason?: string }}
+ */
+function orderEligibility(order, today) {
+  if (!DISPATCHABLE_STATUSES.includes(order?.current_status)) {
+    return { ok: false, reason: `não está pronta a sair (${order?.current_status})` };
+  }
+  if (!order.destination?.city) {
+    return { ok: false, reason: 'sem destino registado' };
+  }
+  // Foi precisamente para isto que o § 3.37 pôs a data no pedido: uma encomenda
+  // reagendada para sexta não entra na rota de terça.
+  if (order.next_attempt_on && String(order.next_attempt_on).slice(0, 10) > today) {
+    return { ok: false, reason: `nova tentativa marcada para ${String(order.next_attempt_on).slice(0, 10)}` };
+  }
+  return { ok: true };
+}
+
+/**
+ * Coordenadas do destino de uma encomenda, se conhecidas. PURA.
+ *
+ * Aceita as duas formas em que as coordenadas aparecem no sistema — no próprio
+ * pedido ou dentro do destino — porque ambas existem consoante a origem do
+ * registo, e obrigar o chamador a normalizar espalharia esse conhecimento.
+ *
+ * @param {object} order
+ * @returns {{ lat: number, lng: number }|null}
+ */
+function orderCoords(order) {
+  const c = order?.coords ?? order?.destination?.coords ?? order?.gps;
+  const lat = Number(c?.lat);
+  const lng = Number(c?.lng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
+  return { lat, lng };
+}
+
+/**
+ * Planeia a distribuição de encomendas por motoristas. PURA — não toca na base.
+ *
+ * Heurística: vizinho mais próximo com capacidade. Parte-se da origem, junta-se
+ * a encomenda mais próxima, depois a mais próxima dessa, até o veículo encher;
+ * repete-se para o motorista seguinte. É a mesma família do que o otimizador de
+ * paradas já usa — introduzir aqui um segundo algoritmo daria duas noções de
+ * "perto" no mesmo sistema.
+ *
+ * A ORDEM das paradas dentro de cada rota NÃO é decidida aqui: é do otimizador
+ * (§ 3.2). Esta função decide quem leva o quê.
+ *
+ * @param {object[]} orders
+ * @param {object[]} drivers
+ * @param {{ origin?: {lat:number,lng:number}, today?: string }} [opts]
+ * @returns {{ routes: object[], unassigned: object[], summary: object }}
+ */
+function planDispatch(orders, drivers, opts = {}) {
+  const today = opts.today ?? new Date().toISOString().slice(0, 10);
+  const origin = opts.origin ?? null;
+
+  const unassigned = [];
+
+  // 1. Elegibilidade das encomendas — as recusadas saem já nomeadas.
+  const candidatas = [];
+  for (const order of orders ?? []) {
+    const elegivel = orderEligibility(order, today);
+    if (elegivel.ok) candidatas.push(order);
+    else unassigned.push({ order_id: order?.id, tracking_code: order?.tracking_code, reason: elegivel.reason });
+  }
+
+  // 2. Motoristas disponíveis. Um `on_route` já leva carga que o sistema não
+  //    sabe medir, e somar-lhe mais seria decidir sobre um veículo que não se vê.
+  const disponiveis = (drivers ?? []).filter((d) => d?.current_status === 'available');
+  if (disponiveis.length === 0) {
+    for (const order of candidatas) {
+      unassigned.push({ order_id: order.id, tracking_code: order.tracking_code, reason: 'sem motoristas disponíveis' });
+    }
+    return { routes: [], unassigned, summary: resumo([], unassigned, candidatas.length) };
+  }
+
+  // Com coordenadas agrupa-se por proximidade; sem elas só resta a capacidade.
+  const comCoords = candidatas.filter((o) => orderCoords(o));
+  const semCoords = candidatas.filter((o) => !orderCoords(o));
+
+  const routes = [];
+  const porAtribuir = new Set(comCoords.map((o) => o.id));
+  const porId = new Map(candidatas.map((o) => [o.id, o]));
+
+  for (const driver of disponiveis) {
+    let capacidade;
+    try {
+      capacidade = driverCapacity(driver).capacity_grams;
+    } catch {
+      // Veículo sem modal válido no cadastro: não se adivinha uma capacidade.
+      continue;
+    }
+
+    const paradas = [];
+    let carga = 0;
+    let desconhecidas = 0;
+    let referencia = origin;
+
+    // Vizinho mais próximo enquanto couber.
+    for (;;) {
+      let melhor = null;
+      let melhorDist = Infinity;
+
+      for (const id of porAtribuir) {
+        const order = porId.get(id);
+        const peso = Number(order.weight_grams);
+        // Peso desconhecido não consome capacidade nem é recusado por isso —
+        // mesmo critério do § 3.33: dizer "não sei" é honesto.
+        const consome = Number.isFinite(peso) && peso > 0 ? peso : 0;
+        if (carga + consome > capacidade) continue;
+
+        const c = orderCoords(order);
+        const dist = referencia ? haversineKm(referencia, c) : 0;
+        if (dist < melhorDist) { melhorDist = dist; melhor = order; }
+      }
+
+      if (!melhor) break;
+
+      const peso = Number(melhor.weight_grams);
+      if (Number.isFinite(peso) && peso > 0) carga += peso; else desconhecidas += 1;
+      paradas.push(melhor);
+      porAtribuir.delete(melhor.id);
+      referencia = orderCoords(melhor);
+    }
+
+    if (paradas.length > 0) {
+      routes.push(montarRota(driver, paradas, carga, desconhecidas, capacidade));
+    }
+  }
+
+  // 3. As sem coordenadas entram no fim, por capacidade, em rotas já formadas
+  //    ou numa nova de um motorista ainda livre.
+  for (const order of semCoords) {
+    const peso = Number(order.weight_grams);
+    const consome = Number.isFinite(peso) && peso > 0 ? peso : 0;
+
+    const rota = routes.find((r) => r.load_grams + consome <= r.capacity_grams);
+    if (rota) {
+      rota.stops.push(paradaDe(order, false));
+      rota.load_grams += consome;
+      if (consome === 0) rota.unknown_weight += 1;
+      rota.load_kg = rota.load_grams / 1000;
+      continue;
+    }
+
+    const livre = disponiveis.find((d) => !routes.some((r) => r.driver_id === d.id));
+    if (livre) {
+      let capacidade;
+      try { capacidade = driverCapacity(livre).capacity_grams; } catch { capacidade = 0; }
+      if (consome <= capacidade) {
+        routes.push(montarRota(livre, [order], consome, consome === 0 ? 1 : 0, capacidade));
+        continue;
+      }
+    }
+    unassigned.push({
+      order_id: order.id, tracking_code: order.tracking_code,
+      reason: 'não coube em nenhum veículo disponível',
+    });
+  }
+
+  // 4. O que sobrou com coordenadas.
+  for (const id of porAtribuir) {
+    const order = porId.get(id);
+    unassigned.push({
+      order_id: order.id, tracking_code: order.tracking_code,
+      reason: 'não coube em nenhum veículo disponível',
+    });
+  }
+
+  return { routes, unassigned, summary: resumo(routes, unassigned, candidatas.length) };
+}
+
+/** @returns {object} Uma parada do plano. PURA. */
+function paradaDe(order, geolocalizada) {
+  const c = orderCoords(order);
+  return {
+    order_id:      order.id,
+    tracking_code: order.tracking_code,
+    address:       order.destination?.city ?? 'Destino',
+    lat:           c?.lat,
+    lng:           c?.lng,
+    weight_grams:  Number.isFinite(Number(order.weight_grams)) ? Number(order.weight_grams) : null,
+    // Diz se entrou pelo agrupamento geográfico ou só por capacidade — quem
+    // revê o plano precisa de saber onde a proposta é mais fraca.
+    geolocated:    geolocalizada,
+  };
+}
+
+/** @returns {object} Uma rota proposta. PURA. */
+function montarRota(driver, orders, loadGrams, unknownWeight, capacityGrams) {
+  return {
+    driver_id:      driver.id,
+    driver_name:    driver.name,
+    vehicle_modal:  driver.vehicle?.type,
+    capacity_grams: capacityGrams,
+    capacity_kg:    capacityGrams / 1000,
+    load_grams:     loadGrams,
+    load_kg:        loadGrams / 1000,
+    unknown_weight: unknownWeight,
+    stops:          orders.map((o) => paradaDe(o, Boolean(orderCoords(o)))),
+  };
+}
+
+/** @returns {object} Contagens do plano. PURA. */
+function resumo(routes, unassigned, elegiveis) {
+  return {
+    eligible_orders: elegiveis,
+    planned_orders:  routes.reduce((n, r) => n + r.stops.length, 0),
+    unassigned:      unassigned.length,
+    drivers_used:    routes.length,
+  };
+}
+
+/**
+ * Carrega o estado real e planeia (§ 3.38).
+ *
+ * A parte que decide é `planDispatch`, pura. Isto é só a ida à base: carrega as
+ * encomendas prontas e os motoristas, e entrega-lhas. Manter a fronteira é o que
+ * permite afirmar as regras de distribuição num teste sem montar nada.
+ *
+ * @param {{ warehouse_id?: string, origin?: {lat:number,lng:number}, limit?: number }} [opts]
+ * @returns {Promise<object>}
+ */
+async function planAutomaticDispatch(opts = {}) {
+  // Uma página generosa: um dia de despacho de uma transportadora média cabe
+  // aqui, e o teto impede que um pedido sem filtro puxe a tabela inteira.
+  const limite = Math.min(Math.max(Number(opts.limit) || 200, 1), 500);
+
+  const { items } = await OrderRepository.list({
+    warehouse_id: opts.warehouse_id,
+    limit: limite,
+    offset: 0,
+  });
+
+  const drivers = await DriverRepository.findAll();
+  const plano = planDispatch(items, drivers, { origin: opts.origin });
+
+  console.info(
+    `[dispatch] Plano automático: ${plano.summary.planned_orders} encomenda(s) `
+    + `em ${plano.summary.drivers_used} rota(s); ${plano.summary.unassigned} por atribuir.`,
+  );
+  return plano;
+}
+
 module.exports = {
   assertRouteFitsDriver,
   assignRouteOrders,
   summarizeStopLoad,
   driverCapacity,
+  // Despacho automático (§ 3.38) — puros
+  planDispatch,
+  orderEligibility,
+  orderCoords,
+  DISPATCHABLE_STATUSES,
+  // Despacho automático — caso de uso
+  planAutomaticDispatch,
   DispatchError,
 };

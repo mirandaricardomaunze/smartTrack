@@ -1233,6 +1233,65 @@ fatura ativa é assinalada sem ser alterada.
 
 ---
 
+### 3.38 Despacho automático
+
+A verificação de carga (§ 3.33) e o otimizador de paradas (§ 3.2) já existiam,
+mas **quem escolhia o motorista era uma pessoa**, encomenda a encomenda. Com
+trinta entregas e seis motoristas isso é meia hora de trabalho todas as manhãs,
+feito de cabeça e sem registo de porquê — e o resultado depende de quem está de
+serviço nesse dia.
+
+**O despacho PROPÕE; não executa sozinho.** É a decisão estruturante desta
+secção. Um sistema que cria rotas sozinho de madrugada parece automação e é, na
+prática, uma forma de ninguém olhar: quando a proposta estiver errada — e vai
+estar, porque o mundo tem informação que o sistema não tem — a carga já saiu.
+O plano é devolvido para quem despacha ver, ajustar e confirmar. A automação
+poupa a meia hora; não substitui a responsabilidade.
+
+**O que decide, e o que já não decide.** Esta secção escolhe **que encomendas
+vão com que motorista**. A ordem das paradas dentro de cada rota continua a ser
+do otimizador (§ 3.2) — dois problemas diferentes, resolvidos onde já estavam.
+
+**Quem é elegível:**
+- **Encomendas** prontas a sair (`at_warehouse` ou `collected`), com destino, e
+  **sem data futura marcada**. Uma encomenda reagendada para sexta não entra na
+  rota de terça: foi precisamente para isso que o § 3.37 pôs a data no pedido.
+- **Motoristas** `available`. Um motorista `on_route` já leva carga que o sistema
+  não sabe medir, e somar-lhe mais seria decidir sobre um veículo que não se vê.
+
+**Como agrupa.** Vizinho mais próximo com capacidade: parte-se da origem, junta-se
+a encomenda mais próxima, depois a mais próxima dessa, até o veículo encher.
+Repete-se para o motorista seguinte. É a heurística mais simples que produz rotas
+geograficamente coerentes, e é a mesma família do que o otimizador já usa —
+introduzir aqui um segundo algoritmo sofisticado daria duas noções de "perto" no
+mesmo sistema. A otimização com janelas, turnos e trânsito é da Prioridade 4.
+
+**O que nunca é inventado:**
+- **Encomenda sem coordenadas** não é excluída — a morada existe e o motorista
+  navega por ela — mas não participa no agrupamento geográfico: entra no fim, por
+  capacidade, e o plano diz que foi assim. Atribuir-lhe uma coordenada plausível
+  seria pôr no mapa uma entrega que ninguém sabe onde é.
+- **Encomenda sem peso** não consome capacidade nem é recusada por isso, e conta
+  em `unknown_weight` — o mesmo critério do § 3.33: dizer "não sei" é honesto,
+  inventar um peso médio produziria uma recusa (ou uma autorização) sem base.
+- **O que não coube fica em `unassigned`, com o motivo nomeado.** Um plano que
+  esconde as sobras deixa encomendas paradas sem ninguém saber porquê.
+
+- **Backend (`/v1/routes/dispatch/plan` e `/dispatch/confirm`, RBAC ADMIN):**
+  o plano é puro (`planDispatch`) e não toca na base; confirmar cria as rotas
+  pelo caminho que já existia, incluindo a verificação de carga e a atribuição
+  do § 3.34 — o despacho automático não é uma porta lateral que salta as
+  validações do despacho manual.
+- **Frontend admin (`/rotas`):** botão que propõe o plano, mostra por motorista
+  o que lhe caberia e o que sobrou (com o motivo), e confirma. Sem emojis.
+
+**Critérios de aceitação:** um motorista ocupado não recebe carga; uma encomenda
+marcada para o futuro não entra; a soma por motorista nunca passa a capacidade do
+veículo; encomendas sem peso não bloqueiam o plano; o que sobra vem nomeado com
+motivo; e confirmar produz exatamente as rotas propostas.
+
+---
+
 ## 4. Requisitos Não Funcionais
 
 ### Cópias de segurança e restauro
@@ -1551,7 +1610,7 @@ O que já existe está marcado; o que falta é o que a operação real ainda ped
 - [x] Inventário com idade da carga, contagem física e transferência entre filiais com manifesto e conferência (§ 3.36)
 - [x] Reagendamento com data acordada e teto de tentativas; devolução ao remetente com prova e COD cancelado (§ 3.37)
 - [ ] Ocorrências com SLA e escalonamento (§ 3.26) e logística reversa pedida pelo cliente (§ 3.27) — âmbitos distintos do § 3.37, ainda por implementar
-- [ ] Despacho automático (a atribuição é manual)
+- [x] Despacho automático: propõe a distribuição por motorista respeitando capacidade, disponibilidade e datas reagendadas; confirma pelo caminho validado (§ 3.38)
 - [ ] SMS, WhatsApp, email e push com provedores reais — hoje simulados fora do email
 
 ### Prioridade 3 — controlo empresarial

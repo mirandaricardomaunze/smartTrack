@@ -26,6 +26,7 @@ import dynamic from 'next/dynamic';
 import { adminApi, Pedido, BackendDriver, Route, RouteStatus } from '@/services/api';
 import { usePreferences, densityClass } from '@/hooks/usePreferences';
 import { Button, Pagination, StatCard, paginationMeta } from '@/components/ui';
+import DespachoAutomatico from '@/components/DespachoAutomatico';
 
 // Leaflet não funciona no Node/SSR — carregamento dinâmico com ssr:false
 const MapaGPS = dynamic(() => import('@/components/MapaGPS'), { ssr: false, loading: () => (
@@ -353,6 +354,11 @@ export default function RotasPage() {
           <StatCard label="Sem Atribuição" value={naoAtribuidos.length} helper={<span className={naoAtribuidos.length > 0 ? 'stat-delta-down' : 'stat-delta-up'}>{naoAtribuidos.length > 0 ? 'Requer alocação manual' : 'Nenhum pedido órfão'}</span>} />
         )}
       </div>
+
+      {/* ── Despacho automático (§ 3.38) ──
+          Antes do mapa: distribuir o dia é a primeira coisa que se faz de manhã;
+          ver onde andam os motoristas vem depois. */}
+      <DespachoAutomatico onConfirmed={() => void loadData()} />
 
       {/* ── Mapa ao vivo ── */}
       <div className="card p-0 overflow-hidden">

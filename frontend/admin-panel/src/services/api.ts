@@ -1018,6 +1018,43 @@ export type StopStatus = 'pending' | 'delivered' | 'failed';
 /** Status canônico de rota — espelha RouteStatus do routes-service. */
 export type RouteStatus = 'PLANEJADA' | 'EM_ANDAMENTO' | 'CONCLUIDA' | 'CANCELADA';
 
+// ─── Despacho automático (spec § 3.38) ───────────────────────────────────────
+
+/** Uma parada proposta. `geolocated: false` = entrou por capacidade, sem mapa. */
+export interface DispatchStop {
+  order_id: string;
+  tracking_code: string;
+  address: string;
+  lat?: number;
+  lng?: number;
+  weight_grams: number | null;
+  geolocated: boolean;
+}
+
+export interface DispatchRoute {
+  driver_id: string;
+  driver_name: string;
+  vehicle_modal: string;
+  capacity_kg: number;
+  load_kg: number;
+  /** Paradas sem peso registado — não consomem capacidade nem são recusadas. */
+  unknown_weight: number;
+  stops: DispatchStop[];
+}
+
+/** Encomenda que o plano não conseguiu colocar, com o motivo nomeado. */
+export interface DispatchLeftover {
+  order_id: string;
+  tracking_code: string;
+  reason: string;
+}
+
+export interface DispatchPlan {
+  routes: DispatchRoute[];
+  unassigned: DispatchLeftover[];
+  summary: { eligible_orders: number; planned_orders: number; unassigned: number; drivers_used: number };
+}
+
 /** Shape cru devolvido por GET /v1/routes (proxy para o routes-service). */
 export interface BackendRouteStop {
   order_id: string;
@@ -1832,6 +1869,19 @@ export const adminApi = {
     const raw = await fetchApi<BackendRoute[]>('/routes');
     return raw.map(mapBackendRouteToRoute);
   },
+
+  // ─── Despacho automático (spec § 3.38) ──────────────────────────────────────
+  // Propõe e confirma em dois passos: o plano é para ser revisto, não executado
+  // às cegas.
+
+  planearDespacho: (opts: { warehouse_id?: string; origin?: { lat: number; lng: number } } = {}): Promise<DispatchPlan> =>
+    fetchApi<DispatchPlan>('/routes/dispatch/plan', { method: 'POST', body: JSON.stringify(opts) }),
+
+  confirmarDespacho: (plan: DispatchPlan, origin?: { lat: number; lng: number }): Promise<{ created: number }> =>
+    fetchApi<{ created: number }>('/routes/dispatch/confirm', {
+      method: 'POST',
+      body: JSON.stringify({ routes: plan.routes, origin }),
+    }),
   
   /** Spec § 3.8 — resumo de relatórios (KPIs, volume, por motorista, distribuição). */
   getReportsSummary: (days = 14): Promise<ReportsSummary> =>

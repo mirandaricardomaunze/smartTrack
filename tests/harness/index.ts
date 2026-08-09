@@ -47,6 +47,7 @@ export { DeliveryOtpFactory, KNOWN_OTP_CODE, KNOWN_OTP_HASH } from './factories/
 export { PaginationFactory } from './factories/pagination.factory';
 export { RbacRequestFactory } from './factories/rbac-request.factory';
 export { RouteFactory } from './factories/route.factory';
+export { DispatchFactory, MAPUTO_PONTOS } from './factories/dispatch.factory';
 export { OfflineDeliveryFactory } from './factories/offline-delivery.factory';
 export { HrEmployeeFactory, HrLeaveFactory, HrAttendanceFactory, HrPayrollFactory, HrPayslipFactory, HrJobFactory, HrCandidateFactory, HrPerformanceFactory } from './factories/hr.factory';
 export { HrLeaveBalanceFactory, HrShiftFactory, HrTimeBankFactory, HrDocumentFactory, HrChecklistFactory, HrTrainingFactory, HrBenefitFactory } from './factories/hr.factory';
@@ -104,5 +105,6 @@ export type { TestDeliveryOtp } from './factories/otp.factory';
 export type { TestPaginationScenario } from './factories/pagination.factory';
 export type { TestRbacRequest } from './factories/rbac-request.factory';
 export type { TestRoute } from './factories/route.factory';
+export type { TestDispatchOrder, TestDispatchDriver } from './factories/dispatch.factory';
 export type { TestProviderHealth, TestDeliveryIncident, TestReturnRequest, TestCustomerPortalOrder, TestRouteConstraints, TestDeliveryProfitability, TestApprovalRequest, ProviderKind, ProviderMode, IncidentKind, IncidentStatus, ReturnStatus } from './factories/professionalization.factory';
 export type { TestMeasuredRequest, TestObservation, TestErrorEvent } from './factories/monitoring.factory';

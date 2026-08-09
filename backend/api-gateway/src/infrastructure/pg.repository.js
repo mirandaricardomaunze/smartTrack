@@ -1707,6 +1707,9 @@ function rowToInvoice(row) {
     hash_control:   row.hash_control ?? undefined,
     signed_at:      row.signed_at ? isoOf(row.signed_at) : undefined,
     issued_by:      row.issued_by ?? undefined,
+    // Vencimento acordado no contrato (§ 3.35). Ausente numa fatura-recibo de
+    // pronto pagamento — ver a nota em `dueDateFrom`.
+    due_date:       row.due_date instanceof Date ? row.due_date.toISOString().slice(0, 10) : (row.due_date ?? undefined),
     // Retificação (NC/ND)
     related_invoice_id: row.related_invoice_id ?? undefined,
     related_number: row.related_number ?? undefined,
@@ -1798,7 +1801,7 @@ const InvoiceRepository = {
           issuer_name, issuer_tax_id, items, tax_summary,
           subtotal_cents, tax_rate_pct, tax_cents, total_cents, currency, status, notes,
           hash, previous_hash, hash_control, signed_at, issued_by,
-          related_invoice_id, related_number,
+          related_invoice_id, related_number, due_date,
           company_id, issued_at, created_at, updated_at
         ) VALUES (
           $1,$2,$3,$4,$5,$6,$7,$8,
@@ -1806,8 +1809,8 @@ const InvoiceRepository = {
           $13,$14,$15,$16,
           $17,$18,$19,$20,$21,$22,$23,
           $24,$25,$26,$27,$28,
-          $29,$30,
-          $31,$32,NOW(),NOW()
+          $29,$30,$31,
+          $32,$33,NOW(),NOW()
         ) RETURNING *
       `, [
         doc.id, number, doc.doc_type, doc.series, seq, doc.order_id ?? null, doc.tracking_code ?? null, doc.client_ref_id ?? null,
@@ -1815,7 +1818,7 @@ const InvoiceRepository = {
         doc.issuer_name ?? null, doc.issuer_tax_id ?? null, JSON.stringify(doc.items ?? []), JSON.stringify(doc.tax_summary ?? []),
         doc.subtotal_cents, doc.tax_rate_pct, doc.tax_cents, doc.total_cents, doc.currency ?? 'MZN', doc.status ?? 'issued', doc.notes ?? null,
         signature.hash, signature.previous_hash, signature.hash_control, signature.signed_at, doc.issued_by ?? null,
-        doc.related_invoice_id ?? null, doc.related_number ?? null,
+        doc.related_invoice_id ?? null, doc.related_number ?? null, doc.due_date ?? null,
         cid, issuedAt,
       ]);
 
@@ -1992,6 +1995,167 @@ const InvoiceRepository = {
       issued_total_cents: Number(r.issued_total), paid_total_cents: Number(r.paid_total),
       credited_total_cents: Number(r.credited_total),
     };
+  },
+
+  /**
+   * Dívida em aberto de um cliente, em centavos (§ 3.35).
+   *
+   * Conta as faturas de VENDA emitidas e não pagas, e desconta as notas de
+   * crédito emitidas ao mesmo cliente: sem esse desconto, um cliente a quem se
+   * creditou uma devolução continuava a aparecer a dever o valor devolvido, e o
+   * limite de crédito travava-o por dinheiro que já não existe.
+   *
+   * @param {string} clientRefId
+   * @returns {Promise<number>}
+   */
+  async outstandingForClient(clientRefId) {
+    if (!clientRefId) return 0;
+    const params = [clientRefId];
+    const { rows } = await pool.query(`
+      SELECT
+        COALESCE(SUM(total_cents) FILTER (WHERE doc_type IN ('FT','FR') AND status = 'issued'), 0) AS devido,
+        COALESCE(SUM(total_cents) FILTER (WHERE doc_type = 'NC' AND status <> 'void'), 0)          AS creditado
+      FROM invoices
+      WHERE client_ref_id = $1${companyClause(params)}
+    `, params);
+    return Math.max(0, Number(rows[0].devido) - Number(rows[0].creditado));
+  },
+};
+
+// ─── ContractRepository ───────────────────────────────────────────────────────
+// Contratos de cliente (spec § 3.35). As tarifas negociadas vivem em JSONB na
+// própria linha — ver a nota em migrations/contracts.js.
+
+/**
+ * @param {object} row
+ * @returns {object}
+ */
+function rowToContract(row) {
+  return {
+    id:                   row.id,
+    client_ref_id:        row.client_ref_id,
+    code:                 row.code,
+    status:               row.status,
+    // DATE volta do driver como Date; a camada de aplicação compara strings
+    // YYYY-MM-DD, e converter aqui evita que cada chamador se lembre de o fazer.
+    starts_on:            row.starts_on instanceof Date ? row.starts_on.toISOString().slice(0, 10) : row.starts_on,
+    ends_on:              row.ends_on instanceof Date ? row.ends_on.toISOString().slice(0, 10) : (row.ends_on ?? null),
+    discount_pct:         Number(row.discount_pct),
+    minimum_charge_cents: Number(row.minimum_charge_cents),
+    payment_terms_days:   Number(row.payment_terms_days),
+    credit_limit_cents:   Number(row.credit_limit_cents),
+    zone_rates:           row.zone_rates ?? [],
+    notes:                row.notes ?? null,
+    created_at:           row.created_at,
+    updated_at:           row.updated_at,
+  };
+}
+
+const ContractRepository = {
+  /**
+   * @param {{ client_ref_id?: string, status?: string }} [opts]
+   * @returns {Promise<object[]>}
+   */
+  async list(opts = {}) {
+    const params = [];
+    const clauses = [];
+    if (opts.client_ref_id) { params.push(opts.client_ref_id); clauses.push(`client_ref_id = $${params.length}`); }
+    if (opts.status)        { params.push(opts.status);        clauses.push(`status = $${params.length}`); }
+
+    const cid = readCompanyId();
+    if (cid) { params.push(cid); clauses.push(`company_id = $${params.length}`); }
+
+    const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+    const { rows } = await pool.query(
+      `SELECT * FROM client_contracts ${where} ORDER BY starts_on DESC, created_at DESC`,
+      params,
+    );
+    return rows.map(rowToContract);
+  },
+
+  /** Todos os contratos de um cliente — a resolução por data é da aplicação. */
+  async listByClient(clientRefId) {
+    return ContractRepository.list({ client_ref_id: clientRefId });
+  },
+
+  async findById(id) {
+    const params = [id];
+    const { rows } = await pool.query(
+      `SELECT * FROM client_contracts WHERE id = $1${companyClause(params)} LIMIT 1`,
+      params,
+    );
+    return rows.length ? rowToContract(rows[0]) : undefined;
+  },
+
+  async findByCode(code) {
+    const params = [code];
+    const { rows } = await pool.query(
+      `SELECT * FROM client_contracts WHERE code = $1${companyClause(params)} LIMIT 1`,
+      params,
+    );
+    return rows.length ? rowToContract(rows[0]) : undefined;
+  },
+
+  async create(contract) {
+    const { rows } = await pool.query(`
+      INSERT INTO client_contracts (
+        id, company_id, client_ref_id, code, status, starts_on, ends_on,
+        discount_pct, minimum_charge_cents, payment_terms_days, credit_limit_cents,
+        zone_rates, notes, created_at, updated_at
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+      RETURNING *
+    `, [
+      contract.id,
+      contract.company_id ?? writeCompanyId(),
+      contract.client_ref_id,
+      contract.code,
+      contract.status,
+      contract.starts_on,
+      contract.ends_on ?? null,
+      contract.discount_pct ?? 0,
+      contract.minimum_charge_cents ?? 0,
+      contract.payment_terms_days ?? 0,
+      contract.credit_limit_cents ?? 0,
+      JSON.stringify(contract.zone_rates ?? []),
+      contract.notes ?? null,
+      contract.created_at,
+      contract.updated_at,
+    ]);
+    return rowToContract(rows[0]);
+  },
+
+  async update(id, contract) {
+    const params = [
+      contract.code,
+      contract.status,
+      contract.starts_on,
+      contract.ends_on ?? null,
+      contract.discount_pct ?? 0,
+      contract.minimum_charge_cents ?? 0,
+      contract.payment_terms_days ?? 0,
+      contract.credit_limit_cents ?? 0,
+      JSON.stringify(contract.zone_rates ?? []),
+      contract.notes ?? null,
+      contract.updated_at,
+      id,
+    ];
+    const { rows } = await pool.query(`
+      UPDATE client_contracts SET
+        code                 = $1,
+        status               = $2,
+        starts_on            = $3,
+        ends_on              = $4,
+        discount_pct         = $5,
+        minimum_charge_cents = $6,
+        payment_terms_days   = $7,
+        credit_limit_cents   = $8,
+        zone_rates           = $9,
+        notes                = $10,
+        updated_at           = $11
+      WHERE id = $12${companyClause(params)}
+      RETURNING *
+    `, params);
+    return rows.length ? rowToContract(rows[0]) : undefined;
   },
 };
 
@@ -3057,4 +3221,4 @@ const HrPortalRepository = {
   ]);return{profile:profile.rows[0],leave_balance:balances.rows[0]||null,attendance:attendance.rows,leaves:leaves.rows,time_bank_minutes:Number(timeBank.rows[0]?.balance_minutes||0),time_bank:timeBank.rows,documents:documents.rows,trainings:trainings.rows,benefits:benefits.rows.map(r=>({...r,amount_cents:Number(r.amount_cents),balance_cents:Number(r.balance_cents)})),performance:performance.rows,payslips:payslips.rows.map(r=>({...r,base_salary_cents:Number(r.base_salary_cents),gross_cents:Number(r.gross_cents),deductions_cents:Number(r.deductions_cents),net_cents:Number(r.net_cents)}))};}
 };
 
-module.exports = { OrderRepository, DriverRepository, UserRepository, UserLocationRepository, WarehouseRepository, SettlementRepository, SupportRepository, ClientRepository, PricingRepository, InvoiceRepository, DocumentSeriesRepository, AuditRepository, PasswordResetRepository, CompanyRepository, CompanyProfileRepository, PlanRepository, SubscriptionRepository, UsageRepository, SubscriptionInvoiceRepository, HrRepository, HrOperationsRepository, HrPortalRepository, FinanceRepository, FleetRepository };
+module.exports = { OrderRepository, DriverRepository, UserRepository, UserLocationRepository, WarehouseRepository, SettlementRepository, SupportRepository, ClientRepository, ContractRepository, PricingRepository, InvoiceRepository, DocumentSeriesRepository, AuditRepository, PasswordResetRepository, CompanyRepository, CompanyProfileRepository, PlanRepository, SubscriptionRepository, UsageRepository, SubscriptionInvoiceRepository, HrRepository, HrOperationsRepository, HrPortalRepository, FinanceRepository, FleetRepository };

@@ -768,6 +768,58 @@ export interface ClientListResult {
   pageSize: number;
 }
 
+// ─── Contratos de cliente (spec § 3.35) ──────────────────────────────────────
+
+export type ContractStatus = 'draft' | 'active' | 'suspended' | 'ended';
+
+/** Tarifa acordada para uma zona — substitui a tabela pública nessa zona. */
+export interface ContractZoneRate {
+  zone_code: string;
+  base_cents?: number;
+  per_kg_cents?: number;
+  included_kg?: number;
+}
+
+export interface ContractInput {
+  client_ref_id: string;
+  code: string;
+  status: ContractStatus;
+  starts_on: string;
+  /** null = sem termo. */
+  ends_on: string | null;
+  discount_pct: number;
+  minimum_charge_cents: number;
+  payment_terms_days: number;
+  /** 0 = sem limite (não "limite zero"). */
+  credit_limit_cents: number;
+  zone_rates: ContractZoneRate[];
+  notes?: string | null;
+}
+
+export interface Contract extends ContractInput {
+  id: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreditStatus {
+  ok: boolean;
+  contract_id: string | null;
+  contract_code: string | null;
+  credit_limit_cents: number;
+  outstanding_cents: number;
+  projected_cents: number;
+  /** null quando não há limite acordado. */
+  available_cents: number | null;
+}
+
+export const CONTRACT_STATUS_LABELS: Record<ContractStatus, string> = {
+  draft:     'Rascunho',
+  active:    'Em vigor',
+  suspended: 'Suspenso',
+  ended:     'Terminado',
+};
+
 export interface ClientStats {
   total: number;
   active: number;
@@ -1787,6 +1839,24 @@ export const adminApi = {
 
   deactivateCliente: (id: string): Promise<Client> =>
     fetchApi<Client>(`/clients/${id}/deactivate`, { method: 'POST' }),
+
+  // ─── Contratos de cliente (spec § 3.35) ─────────────────────────────────────
+
+  getContratos: (clientRefId?: string): Promise<Contract[]> =>
+    fetchApi<Contract[]>(`/contracts${clientRefId ? `?client_ref_id=${encodeURIComponent(clientRefId)}` : ''}`),
+
+  createContrato: (data: ContractInput): Promise<Contract> =>
+    fetchApi<Contract>('/contracts', { method: 'POST', body: JSON.stringify(data) }),
+
+  updateContrato: (id: string, data: Partial<ContractInput>): Promise<Contract> =>
+    fetchApi<Contract>(`/contracts/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+
+  endContrato: (id: string): Promise<Contract> =>
+    fetchApi<Contract>(`/contracts/${id}/end`, { method: 'POST' }),
+
+  /** Dívida em aberto e margem disponível — o que decide se o cliente recebe mais serviço. */
+  getCredito: (clientRefId: string): Promise<CreditStatus> =>
+    fetchApi<CreditStatus>(`/contracts/credit/${encodeURIComponent(clientRefId)}`),
 
   // ─── Tarifação (spec § 3.13) ────────────────────────────────────────────────
 

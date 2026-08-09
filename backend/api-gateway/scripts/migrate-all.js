@@ -23,6 +23,8 @@ const moduleMigrations = [
   ['estado de acesso das contas', 'api-gateway/src/infrastructure/migrate-user-access.js'],
   ['índices da listagem de pedidos', 'api-gateway/src/infrastructure/migrate-orders-index.js'],
   ['registo central de erros', 'api-gateway/src/infrastructure/migrate-monitoring.js'],
+  // Depois do núcleo: acrescenta colunas a `invoices` e a `orders`.
+  ['contratos de cliente', 'api-gateway/src/infrastructure/migrate-contracts.js'],
   // Tem de correr depois de a tabela `orders` existir: lê o POD de lá e move as
   // imagens para `order_pod_images`.
   ['imagens do comprovativo de entrega', 'api-gateway/src/infrastructure/migrate-pod-images.js'],

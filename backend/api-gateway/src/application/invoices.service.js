@@ -145,6 +145,7 @@ async function issueDocument(input) {
       total_cents:    totals.total_cents,
       status:         input.status ?? InvoiceStatus.ISSUED,
       notes:          input.notes,
+      due_date:       input.due_date,
       issued_by:      input.issued_by,
       related_invoice_id: input.related_invoice_id,
       related_number: input.related_number,
@@ -171,6 +172,15 @@ async function createInvoiceForOrder(orderId, opts = {}) {
   let client;
   if (order.client_ref_id) client = await ClientRepository.findById(order.client_ref_id);
 
+  // Prazo de pagamento acordado (§ 3.35). Sem contrato, ou com prazo 0, a
+  // fatura não leva vencimento: é uma fatura-recibo paga no ato, e datá-la com
+  // o próprio dia da emissão faria qualquer mapa de dívida contá-la como
+  // vencida na manhã seguinte.
+  // `require` à chamada — `contracts.service` fecha um ciclo com o repositório.
+  const contracts = require('./contracts.service');
+  const contrato = order.client_ref_id ? await contracts.contractForClient(order.client_ref_id) : null;
+  const due_date = contrato ? contracts.dueDateFrom(new Date().toISOString(), contrato.payment_terms_days) : null;
+
   return issueDocument({
     doc_type: fiscal.DocType.FT,
     series: opts.series,
@@ -189,6 +199,7 @@ async function createInvoiceForOrder(orderId, opts = {}) {
       tax_rate_pct: TAX_RATE_PCT,
     }],
     notes: typeof opts.notes === 'string' && opts.notes.trim() ? opts.notes.trim().slice(0, 2000) : undefined,
+    due_date,
     issued_by: opts.issued_by,
   });
 }

@@ -27,6 +27,7 @@ export { PushFactory } from './factories/push.factory';
 export type { TestFirebaseCredentials, TestPushRequest } from './factories/push.factory';
 export { SupportThreadFactory, SupportMessageFactory } from './factories/support.factory';
 export { ClientFactory } from './factories/client.factory';
+export { ContractFactory } from './factories/contract.factory';
 export { PricingZoneFactory, QuoteInputFactory } from './factories/pricing.factory';
 export { DriverVehicleFactory, ModalLoadFactory, MODAL_CAPACITY_KG, MODAL_SYNONYM_CASES, DeliveryModal } from './factories/delivery-modal.factory';
 export { InvoiceFactory } from './factories/invoice.factory';
@@ -81,6 +82,7 @@ export type { TestDriverSettlement, TestCodCollection } from './factories/settle
 export type { TestOutboundMessage } from './factories/messaging.factory';
 export type { TestSupportThreadInput, TestSupportMessage } from './factories/support.factory';
 export type { TestClientInput } from './factories/client.factory';
+export type { TestContractInput, TestZoneRate, TestQuoteBreakdown } from './factories/contract.factory';
 export type { TestPricingZoneInput, TestQuoteInput } from './factories/pricing.factory';
 export type { TestDriverVehicle, TestModalLoad } from './factories/delivery-modal.factory';
 export type { TestInvoiceInput, TestInvoiceItem } from './factories/invoice.factory';

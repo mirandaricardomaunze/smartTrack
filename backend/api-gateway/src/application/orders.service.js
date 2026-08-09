@@ -221,6 +221,16 @@ async function createOrder(dto) {
   // contexto (testes/tarefas de fundo) nem em planos sem limite.
   await assertQuota();
 
+  // Limite de crédito do contrato (§ 3.35). Trava ANTES de gravar: aceitar a
+  // encomenda e recusar a fatura depois deixa a operação a transportar carga de
+  // um cliente que já não devia estar a receber serviço. Sem cliente registado,
+  // sem contrato ou sem limite acordado, não faz nada.
+  // `require` à chamada — `contracts.service` fecha um ciclo com o repositório.
+  if (dto.client_ref_id) {
+    const contracts = require('./contracts.service');
+    await contracts.assertWithinCredit(String(dto.client_ref_id).trim(), Number(dto.value) || 0);
+  }
+
   const code = dto.tracking_code.trim().toUpperCase();
   validateTrackingCode(code);
 

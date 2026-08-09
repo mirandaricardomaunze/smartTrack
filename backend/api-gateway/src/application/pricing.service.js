@@ -120,7 +120,20 @@ function computeQuote(input, zone, cfg = {}) {
 
 // ─── Use Cases ───────────────────────────────────────────────────────────────
 
-/** Orçamento a partir do código de zona. */
+/**
+ * Orçamento a partir do código de zona.
+ *
+ * Com `client_ref_id`, o contrato em vigor (§ 3.35) entra no cálculo em dois
+ * momentos distintos e por razões distintas:
+ *
+ *   1. a **tarifa negociada da zona** substitui a tabela pública ANTES de
+ *      `computeQuote`, para que o multiplicador de expresso e o do modal
+ *      incidam sobre o preço acordado — aplicá-la depois daria um expresso
+ *      calculado sobre um preço que aquele cliente não paga;
+ *   2. o **desconto e o piso** aplicam-se DEPOIS, sobre o frete já formado.
+ *
+ * Sem cliente, ou sem contrato em vigor, o resultado é exatamente o de antes.
+ */
 async function quote(input = {}) {
   if (!input.zone_code) throw new PricingValidationError('A zona é obrigatória.');
 
@@ -136,7 +149,33 @@ async function quote(input = {}) {
   const zone = await PricingRepository.findZoneByCode(input.zone_code);
   if (!zone) throw new ZoneNotFoundError(input.zone_code);
   if (!zone.active) throw new PricingValidationError(`A zona "${zone.code}" está inativa.`);
-  return computeQuote(input, zone);
+
+  // `require` aqui dentro e não no topo: `contracts.service` importa o
+  // repositório, que importa este módulo em cadeia. Carregar à chamada quebra o
+  // ciclo sem obrigar a mover código de sítio.
+  const contracts = require('./contracts.service');
+  const contract = input.client_ref_id
+    ? await contracts.contractForClient(input.client_ref_id, input.on_date)
+    : null;
+
+  const negociada = contracts.zoneRateFor(contract, zone.code);
+  const zonaEfetiva = negociada
+    ? {
+      ...zone,
+      base_cents:   negociada.base_cents   ?? zone.base_cents,
+      per_kg_cents: negociada.per_kg_cents ?? zone.per_kg_cents,
+      included_kg:  negociada.included_kg  ?? zone.included_kg,
+      // Marca a origem do preço: quem lê o orçamento tem de distinguir uma
+      // tarifa acordada de um desconto sobre a tabela pública.
+      negotiated: true,
+    }
+    : zone;
+
+  const bruto = computeQuote(input, zonaEfetiva);
+  return {
+    ...contracts.applyContractToQuote(bruto, contract),
+    negotiated_zone_rate: Boolean(negociada),
+  };
 }
 
 async function listZones(opts = {}) {

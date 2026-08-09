@@ -976,6 +976,78 @@ portal do cliente e app do motorista.
 
 ---
 
+### 3.35 Contratos de cliente
+
+O § 3.12 regista o cliente e o § 3.13 calcula a tabela pública. Entre os dois
+faltava o que na prática rege quase toda a faturação de uma transportadora: a
+**condição negociada com o cliente recorrente**. Sem ela, quem regista o pedido
+tem de se lembrar do desconto acordado e escrever o preço à mão — e o erro
+acontece nos dois sentidos, a cobrar de mais e a cobrar de menos.
+
+**Um contrato tem de mudar o que acontece, não apenas ficar registado.** Um
+cadastro de condições que ninguém aplica é pior do que não existir: dá a
+impressão de que o sistema trata do assunto. Daí os três efeitos:
+
+1. **O orçamento aplica-o sozinho.** `POST /v1/pricing/quote` com
+   `client_ref_id` resolve o contrato em vigor e devolve o preço acordado.
+2. **A fatura herda o prazo.** `invoices.due_date` sai de
+   `payment_terms_days`.
+3. **O limite de crédito trava encomendas.** `createOrder` recusa quando a
+   dívida em aberto mais a encomenda nova passam o limite.
+
+**Como o preço se forma, e porquê nesta ordem.** A **tarifa negociada da zona**
+substitui a tabela pública *antes* do cálculo, para que o multiplicador de
+expresso e o do modal incidam sobre o preço acordado — aplicá-la depois daria um
+expresso calculado sobre um preço que aquele cliente não paga. O **desconto**
+incide sobre o frete (base + peso + serviço + modal) e **não** sobre a sobretaxa
+de COD, que é um custo repassado: descontá-la seria oferecer dinheiro que sai da
+empresa à mesma. O **frete mínimo** aplica-se *depois* do desconto, que é
+precisamente para o que serve — impedir que um desconto grande numa encomenda
+pequena deixe o frete abaixo do que custa fazê-la. Cada parcela vem em linha
+própria no detalhe (`contract_code`, `contract_discount_cents`,
+`minimum_adjustment_cents`): um desconto que só aparece no total é indefensável
+quando o cliente pergunta a conta.
+
+**Um contrato ativo por cliente e por data.** Períodos sobrepostos são recusados
+na escrita. A alternativa — escolher um deles na leitura — faria o preço depender
+da ordem das linhas, e "porque é que esta encomenda saiu a este preço" deixaria
+de ter resposta. Rascunhos e suspensos podem sobrepor-se: não estão em vigor.
+`ends_on` é **inclusivo**, como qualquer pessoa lê um contrato em papel.
+
+**Um contrato termina, não se apaga** — as encomendas faturadas apontam para ele
+e sem a linha ninguém explica o preço que saiu (mesmo raciocínio do § 3.32 para
+as contas). E `credit_limit_cents = 0` significa **sem limite**, não "limite
+zero": tratá-lo como zero travaria todos os clientes no dia em que a
+funcionalidade entrasse.
+
+**Sem vencimento no pronto pagamento.** Uma fatura-recibo paga no ato não tem
+vencimento; datá-la com o próprio dia da emissão faria qualquer mapa de dívida
+contá-la como vencida na manhã seguinte.
+
+- **Backend (`/v1/contracts`):** ler é de ADMIN e SUPPORT — quem atende precisa
+  de saber a condição acordada; **escrever é só de ADMIN**, porque alterar um
+  desconto é alterar a receita. `GET /`, `GET /:id`, `POST /`, `PUT /:id`,
+  `POST /:id/end`, `GET /credit/:clientRefId`. Entidade `client_contracts`
+  (tarifas negociadas em JSONB na própria linha — lista curta, lida sempre com o
+  contrato e nunca consultada por si); `invoices` += `due_date`.
+- **Não há `orders.contract_id`**: o pedido já guarda o orçamento inteiro em
+  `orders.pricing`, que passou a trazer o contrato aplicado. Duplicar o dado em
+  dois sítios que podem divergir seria pior do que a consulta por
+  `pricing->>'contract_id'`.
+- **Frontend admin:** secção de contratos no detalhe do cliente, com a
+  **situação de crédito em destaque** — é o número que decide se o cliente pode
+  receber mais serviço, e sem ele quem atende só descobre o problema quando a
+  criação da encomenda é recusada. Sem emojis.
+
+**Critérios de aceitação:** um cliente sem contrato paga exatamente a tabela
+pública; o desconto acordado aparece no orçamento sem ninguém o escrever; a
+sobretaxa de COD não é descontada; o frete nunca desce abaixo do mínimo; dois
+contratos ativos sobrepostos são recusados; a fatura de um contrato a 30 dias sai
+com vencimento a 30 dias e a de pronto pagamento sai sem vencimento; e uma
+encomenda que ultrapassa o limite de crédito é recusada **antes** de ser gravada.
+
+---
+
 ## 4. Requisitos Não Funcionais
 
 ### Cópias de segurança e restauro
@@ -1282,14 +1354,16 @@ Nada de novo entra enquanto isto não estiver fechado. Concluído:
 
 O que já existe está marcado; o que falta é o que a operação real ainda pede.
 
-- [x] Clientes, tarifação por peso/volume/distância/zona, recolha, expedição e entrega
+- [x] Clientes; recolha, expedição e entrega
+- [x] Tarifação por **zona, peso, nível de serviço e modal**, com sobretaxa de COD (§ 3.13)
+- [ ] Tarifação por **volume** (peso cobrável = maior entre real e volumétrico) e por **distância**
 - [x] Armazéns e movimentos; etiquetas e leitura de códigos (§ 3.15)
 - [x] Planeamento de rotas e verificação de carga no despacho (§ 3.2, § 3.33)
 - [x] Rastreio GPS dos motoristas; POD com foto, assinatura, nome, localização e data (§ 3.28)
 - [x] Insucesso, pagamento na entrega e reconciliação de caixa (§ 3.5)
 - [x] Manutenção, combustível e documentos da frota (§ 3.18)
 - [x] Portal do cliente e app do motorista com funcionamento offline (§ 3.6, § 3.25)
-- [ ] Contratos por cliente (condições comerciais acordadas, não só o cadastro)
+- [x] Contratos por cliente: desconto, tarifa negociada por zona, frete mínimo, prazo de pagamento e limite de crédito, aplicados pelo sistema (§ 3.35)
 - [ ] Inventário e transferência entre filiais
 - [ ] Reagendamento e devoluções como fluxo próprio (§ 3.26, § 3.27)
 - [ ] Despacho automático (a atribuição é manual)

@@ -1368,6 +1368,69 @@ exceção traz identificador, antiguidade e motivo.
 
 ---
 
+### 3.40 Rentabilidade por pedido, rota, cliente e viatura
+
+Saber quanto se fatura é fácil; saber quanto **sobra** é o que decide preços,
+contratos e que clientes vale a pena manter. Sem isto, a decisão de dar 20% a um
+cliente grande é tomada no escuro — e o cliente grande é precisamente aquele em
+que 20% custa dinheiro a sério.
+
+**A regra que governa a secção: um custo que não se mede não se inventa.** Um
+relatório de margem que assume um custo por quilómetro produz números confiantes
+que vão orientar decisões de preço. Se o número for inventado, a decisão é pior
+do que a que se tomava a olho — porque agora tem a autoridade de um relatório.
+Por isso **cada custo declara a sua origem** e o relatório declara a sua
+cobertura.
+
+**O que é MEDIDO.** O combustível. Entre dois abastecimentos de depósito cheio
+sabe-se o custo e sabe-se a distância pelo conta-quilómetros: o custo por km sai
+daí, por viatura, sem ninguém o estimar. É a única parcela que o sistema já tem
+matéria-prima para calcular.
+
+**O que é CONFIGURADO**, com default zero: manutenção e desgaste por km
+(`FLEET_UPKEEP_CENTS_PER_KM`) e o custo de motorista por rota
+(`FLEET_DRIVER_COST_PER_ROUTE_CENTS`). Zero por omissão de propósito — assim a
+margem começa por mostrar **só o que é real**, e cresce em rigor à medida que a
+empresa preenche o que sabe. Um default plausível seria pior: ninguém o mudava e
+toda a gente acreditaria nele.
+
+**O que NÃO é calculado:** salários rateados por entrega, amortização, seguros e
+estrutura. A folha salarial é mensal e por pessoa (§ 3.16); reparti-la por
+entrega exigiria horas trabalhadas por rota, que o sistema não regista. Enquanto
+não registar, o relatório diz que a margem é **antes** desses custos, e não
+finge.
+
+**Cobertura declarada.** Toda a resposta traz `cost_coverage`: que parcelas
+entraram, quais estão a zero por não estarem configuradas, e quantas viaturas têm
+custo medido. Uma margem de 40% com o combustível desconhecido não é uma margem
+de 40% — é uma margem por cima, e quem lê tem de o ver sem ter de perguntar.
+
+**Como o custo da rota chega ao pedido.** Repartição **igual pelas paradas**. A
+alternativa — ponderar por distância — parece mais justa e não é sustentável: o
+otimizador guarda a distância **total** da rota, não a de cada perna, e inventar
+a repartição por linha reta entre paradas daria um número com aparência de
+precisão e sem base. Igual é simples, explicável ao cliente e honesto quanto ao
+que se sabe.
+
+**Uma encomenda sem rota não tem custo de transporte atribuído** e é marcada como
+tal, em vez de aparecer com margem de 100%. Foi entregue por um caminho que o
+sistema não acompanhou; dizê-lo é a resposta certa.
+
+- **Backend (`/v1/profitability`, RBAC ADMIN):** só ADMIN — margem por cliente é
+  informação comercial sensível, e quem atende ao balcão não precisa dela para
+  fazer o seu trabalho. `GET /orders`, `GET /routes`, `GET /clients`,
+  `GET /vehicles`, todos com janela `from`/`to`.
+- **Frontend admin (`/relatorios`):** secção de rentabilidade com a cobertura
+  visível no topo. Sem emojis.
+
+**Critérios de aceitação:** o custo por km de uma viatura com abastecimentos sai
+`measured`; sem abastecimentos sai `unknown` e a margem diz que é parcial; uma
+encomenda sem rota vem com `cost_known: false`; o custo de uma rota repartido
+pelas paradas soma exatamente o custo da rota; e nenhuma parcela configurada a
+zero é apresentada como se fosse medida.
+
+---
+
 ## 4. Requisitos Não Funcionais
 
 ### Cópias de segurança e restauro
@@ -1700,7 +1763,7 @@ O que já existe está marcado; o que falta é o que a operação real ainda ped
 - [x] Relatórios exportáveis em PDF e CSV (§ 3.17, § 3.20)
 - [x] Contas a receber e a pagar como lançamentos com vencimento e saldo (§ 3.17)
 - [x] Dashboard operacional: indicadores contados em SQL sobre a empresa inteira e fila de exceções ordenada por severidade (§ 3.39). **Corrigiu um painel que contava sobre a primeira página de encomendas e apresentava o resultado como o retrato da operação**
-- [ ] Custos e rentabilidade por pedido, rota, cliente e viatura (§ 3.30)
+- [x] Rentabilidade por pedido, rota, cliente e viatura, com o combustível MEDIDO dos abastecimentos e a cobertura de custos declarada em cada resposta (§ 3.40)
 - [ ] Contas a receber **por cliente**, ligadas às faturas — hoje o lançamento é avulso
 - [ ] SLA e ocorrências (§ 3.26)
 - [ ] Desempenho dos motoristas a partir de dados reais (§ 3.7 — hoje o motorista nasce com 100% de pontualidade e sucesso, valores que nunca são recalculados a partir das entregas)

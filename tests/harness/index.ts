@@ -57,6 +57,7 @@ export { FleetVehicleFactory, FuelEntryFactory, FuelConsumptionFactory } from '.
 export { ProviderHealthFactory, DeliveryIncidentFactory, ReturnRequestFactory, CustomerPortalOrderFactory, RouteConstraintsFactory, DeliveryProfitabilityFactory, ApprovalRequestFactory } from './factories/professionalization.factory';
 export { MonitoringFactory } from './factories/monitoring.factory';
 export { OperationsFactory } from './factories/operations.factory';
+export { ProfitabilityFactory } from './factories/profitability.factory';
 
 // Percursos (conduzem vários módulos pela ordem da operação, não geram dados)
 export { DeliveryJourney } from './journeys/delivery-journey';
@@ -110,3 +111,4 @@ export type { TestDispatchOrder, TestDispatchDriver } from './factories/dispatch
 export type { TestProviderHealth, TestDeliveryIncident, TestReturnRequest, TestCustomerPortalOrder, TestRouteConstraints, TestDeliveryProfitability, TestApprovalRequest, ProviderKind, ProviderMode, IncidentKind, IncidentStatus, ReturnStatus } from './factories/professionalization.factory';
 export type { TestMeasuredRequest, TestObservation, TestErrorEvent } from './factories/monitoring.factory';
 export type { TestOperationException, ExceptionKind } from './factories/operations.factory';
+export type { TestFuelFill, TestVehicleCost, TestCostModel } from './factories/profitability.factory';

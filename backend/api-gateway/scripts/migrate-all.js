@@ -45,6 +45,8 @@ const moduleMigrations = [
   ['frota', 'api-gateway/scripts/migrate-fleet.js'],
   ['sincronização', 'orders-service/src/infrastructure/migrate.js'],
   ['rotas', 'routes-service/src/infrastructure/migrate.js'],
+  // Depois de `rotas` e de `drivers`: o backfill da empresa vem do motorista.
+  ['rotas — isolamento por empresa', 'api-gateway/src/infrastructure/migrate-routes-tenant.js'],
   ['pagamentos', 'payments-service/src/infrastructure/migrate.js'],
   ['notificações', 'notifications-service/src/infrastructure/migrate.js'],
   ['rastreio', 'tracking-intl-service/src/infrastructure/migrate.js'],

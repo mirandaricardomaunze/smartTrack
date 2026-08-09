@@ -15,6 +15,7 @@ import { adminApi, type ReportsSummary, type ReportVolumePoint } from '@/service
 import { useCompanyProfile } from '@/hooks/useCompanyProfile';
 import { exportReportPdf } from '@/services/documentPdf';
 import { Button, Card, PageHeader, StatCard } from '@/components/ui';
+import Rentabilidade from '@/components/Rentabilidade';
 
 // Paleta categórica validada (CVD-safe no fundo escuro) — ordem fixa.
 const C_CREATED = '#6366f1';
@@ -246,6 +247,10 @@ export default function RelatoriosPage() {
           <Button size="sm" variant="secondary" onClick={() => loadData(days)}>Tentar Novamente</Button>
         </div>
       )}
+
+      {/* Rentabilidade (§ 3.40). Antes dos gráficos de volume: quanto sobra
+          decide mais do que quantas entregas se fizeram. */}
+      <Rentabilidade />
 
       {loading || !ov ? (
         <div className="p-12 text-center text-slate-500">A carregar relatórios...</div>

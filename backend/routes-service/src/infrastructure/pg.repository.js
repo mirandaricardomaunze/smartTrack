@@ -11,6 +11,27 @@
 'use strict';
 
 const pool = require('./db');
+// A MESMA instância de AsyncLocalStorage que o gateway usa — tem de ser este
+// ficheiro e não uma cópia, ou o contexto da requisição não é visível daqui.
+// Mesmo caminho que o notifications-service e o tracking-intl-service já usam.
+const { readCompanyId, writeCompanyId } = require('../../../api-gateway/src/infrastructure/tenant-context');
+
+/**
+ * ` AND company_id = $n` quando há empresa em contexto, '' quando não há.
+ *
+ * Sem isto, `SELECT * FROM routes` devolvia as rotas de TODAS as empresas — com
+ * identificadores de motorista, moradas das paradas e números de encomenda de
+ * outros clientes da plataforma (§ 2.4).
+ *
+ * @param {unknown[]} params
+ * @returns {string}
+ */
+function companyClause(params) {
+  const cid = readCompanyId();
+  if (!cid) return '';
+  params.push(cid);
+  return ` AND company_id = $${params.length}`;
+}
 
 // ─── Helpers internos ─────────────────────────────────────────────────────────
 
@@ -47,7 +68,11 @@ const RouteRepository = {
    * @returns {Promise<object[]>}
    */
   async findAll() {
-    const { rows } = await pool.query('SELECT * FROM routes ORDER BY created_at DESC');
+    const params = [];
+    const { rows } = await pool.query(
+      `SELECT * FROM routes WHERE TRUE${companyClause(params)} ORDER BY created_at DESC`,
+      params,
+    );
     return rows.map(rowToRoute);
   },
 
@@ -56,7 +81,11 @@ const RouteRepository = {
    * @returns {Promise<object|undefined>}
    */
   async findById(id) {
-    const { rows } = await pool.query('SELECT * FROM routes WHERE id = $1 LIMIT 1', [id]);
+    const params = [id];
+    const { rows } = await pool.query(
+      `SELECT * FROM routes WHERE id = $1${companyClause(params)} LIMIT 1`,
+      params,
+    );
     return rows[0] ? rowToRoute(rows[0]) : undefined;
   },
 
@@ -65,9 +94,10 @@ const RouteRepository = {
    * @returns {Promise<object[]>}
    */
   async findByDriver(driverId) {
+    const params = [driverId];
     const { rows } = await pool.query(
-      'SELECT * FROM routes WHERE driver_id = $1 ORDER BY created_at DESC',
-      [driverId],
+      `SELECT * FROM routes WHERE driver_id = $1${companyClause(params)} ORDER BY created_at DESC`,
+      params,
     );
     return rows.map(rowToRoute);
   },
@@ -78,12 +108,14 @@ const RouteRepository = {
    * @returns {Promise<object|undefined>}
    */
   async findActiveByDriver(driverId) {
+    const params = [driverId];
+    const filtro = companyClause(params);
     const { rows } = await pool.query(
       `SELECT * FROM routes
-        WHERE driver_id = $1 AND status IN ('PLANEJADA', 'EM_ANDAMENTO')
+        WHERE driver_id = $1 AND status IN ('PLANEJADA', 'EM_ANDAMENTO')${filtro}
         ORDER BY created_at DESC
         LIMIT 1`,
-      [driverId],
+      params,
     );
     return rows[0] ? rowToRoute(rows[0]) : undefined;
   },
@@ -94,8 +126,8 @@ const RouteRepository = {
    */
   async create(route) {
     const { rows } = await pool.query(
-      `INSERT INTO routes (id, driver_id, stops, status, distance_km, optimized_at, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      `INSERT INTO routes (id, driver_id, stops, status, distance_km, optimized_at, created_at, updated_at, company_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
        RETURNING *`,
       [
         route.id,
@@ -106,6 +138,7 @@ const RouteRepository = {
         route.optimized_at,
         route.created_at,
         route.updated_at,
+        route.company_id ?? writeCompanyId(),
       ],
     );
     return rowToRoute(rows[0]);
@@ -116,6 +149,14 @@ const RouteRepository = {
    * @returns {Promise<object|undefined>}
    */
   async update(route) {
+    const params = [
+      JSON.stringify(route.stops),
+      route.status,
+      route.distance_km,
+      route.optimized_at,
+      route.updated_at,
+      route.id,
+    ];
     const { rows } = await pool.query(
       `UPDATE routes SET
          stops        = $1,
@@ -123,16 +164,9 @@ const RouteRepository = {
          distance_km  = $3,
          optimized_at = $4,
          updated_at   = $5
-       WHERE id = $6
+       WHERE id = $6${companyClause(params)}
        RETURNING *`,
-      [
-        JSON.stringify(route.stops),
-        route.status,
-        route.distance_km,
-        route.optimized_at,
-        route.updated_at,
-        route.id,
-      ],
+      params,
     );
     return rows[0] ? rowToRoute(rows[0]) : undefined;
   },
@@ -142,6 +176,7 @@ const RouteRepository = {
    * @returns {Promise<{planned: number, in_progress: number, completed: number, cancelled: number}>}
    */
   async getStats() {
+    const params = [];
     const { rows } = await pool.query(`
       SELECT
         COUNT(*) FILTER (WHERE status = 'PLANEJADA')    AS planned,
@@ -149,7 +184,8 @@ const RouteRepository = {
         COUNT(*) FILTER (WHERE status = 'CONCLUIDA')    AS completed,
         COUNT(*) FILTER (WHERE status = 'CANCELADA')    AS cancelled
       FROM routes
-    `);
+      WHERE TRUE${companyClause(params)}
+    `, params);
 
     const row = rows[0] ?? {};
     return {

@@ -1055,6 +1055,51 @@ export interface DispatchPlan {
   summary: { eligible_orders: number; planned_orders: number; unassigned: number; drivers_used: number };
 }
 
+// ─── Rentabilidade (spec § 3.40) ─────────────────────────────────────────────
+
+/** Comum a todas as linhas de margem. */
+interface MarginFields {
+  revenue_cents: number;
+  cost_cents: number;
+  profit_cents: number;
+  /** `null` sem receita — dividir por zero daria um número absurdo no ecrã. */
+  margin_pct: number | null;
+  /** `false` = há custo em falta; a margem está por cima. */
+  cost_known: boolean;
+}
+
+export interface ClientProfit extends MarginFields {
+  client: string;
+  client_ref_id?: string;
+  orders: number;
+  orders_without_cost: number;
+}
+
+export interface RouteProfit extends MarginFields {
+  route_id: string;
+  driver_name?: string;
+  plate: string | null;
+  distance_km: number;
+  stops: number;
+  cost_breakdown: { fuel_cents: number; upkeep_cents: number; driver_cents: number; fuel_known: boolean };
+}
+
+export interface VehicleProfit extends MarginFields {
+  plate: string;
+  routes: number;
+  distance_km: number;
+  fuel_known: boolean;
+}
+
+/** O que entrou no cálculo e o que ficou de fora. */
+export interface CostCoverage {
+  fuel: { source: string; vehicles_with_data: number; vehicles_total: number };
+  upkeep_cents_per_km: { value: number; source: string };
+  driver_cost_per_route_cents: { value: number; source: string };
+  excluded: string[];
+  caveat: string;
+}
+
 // ─── Dashboard operacional (spec § 3.39) ─────────────────────────────────────
 
 export interface OperationsSummary {
@@ -1706,6 +1751,19 @@ export const adminApi = {
 
   getOperationsExceptions: (): Promise<OperationsExceptions> =>
     fetchApi<OperationsExceptions>('/operations/exceptions'),
+
+  // ─── Rentabilidade (spec § 3.40) ────────────────────────────────────────────
+  // Toda a resposta traz `cost_coverage`: uma margem sem a cobertura declarada é
+  // um número que parece completo e não é.
+
+  getRentabilidadeClientes: (): Promise<{ clients: ClientProfit[]; cost_coverage: CostCoverage }> =>
+    fetchApi('/profitability/clients'),
+
+  getRentabilidadeRotas: (): Promise<{ routes: RouteProfit[]; cost_coverage: CostCoverage }> =>
+    fetchApi('/profitability/routes'),
+
+  getRentabilidadeViaturas: (): Promise<{ vehicles: VehicleProfit[]; cost_coverage: CostCoverage }> =>
+    fetchApi('/profitability/vehicles'),
   
   createPedido: async (order: CreateOrderData): Promise<Order> => {
     const payload = {

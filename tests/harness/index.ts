@@ -58,6 +58,7 @@ export { ProviderHealthFactory, DeliveryIncidentFactory, ReturnRequestFactory, C
 export { MonitoringFactory } from './factories/monitoring.factory';
 export { OperationsFactory } from './factories/operations.factory';
 export { ProfitabilityFactory } from './factories/profitability.factory';
+export { ReceivablesFactory, HOJE as RECEIVABLES_TODAY } from './factories/receivables.factory';
 
 // Percursos (conduzem vários módulos pela ordem da operação, não geram dados)
 export { DeliveryJourney } from './journeys/delivery-journey';
@@ -112,3 +113,4 @@ export type { TestProviderHealth, TestDeliveryIncident, TestReturnRequest, TestC
 export type { TestMeasuredRequest, TestObservation, TestErrorEvent } from './factories/monitoring.factory';
 export type { TestOperationException, ExceptionKind } from './factories/operations.factory';
 export type { TestFuelFill, TestVehicleCost, TestCostModel } from './factories/profitability.factory';
+export type { TestReceivableInvoice, AgingBucket } from './factories/receivables.factory';

@@ -1431,6 +1431,49 @@ zero é apresentada como se fosse medida.
 
 ---
 
+### 3.41 Contas a receber por cliente
+
+O § 3.17 já registava contas a receber como lançamentos avulsos, e o § 3.35 já
+sabia somar a dívida de um cliente para travar o limite de crédito. Faltava a
+pergunta que quem cobra faz todas as semanas: **quem deve, quanto, e há quanto
+tempo**. Sem antiguidade, uma dívida de 500 mil vencida há noventa dias é
+indistinguível de uma emitida ontem — e é a primeira que decide se a empresa tem
+tesouraria no mês seguinte.
+
+**A antiguidade conta-se a partir do VENCIMENTO, não da emissão.** Uma fatura a
+30 dias emitida hoje não está vencida; classificá-la pela data de emissão poria
+metade da carteira em atraso no dia em que o relatório entrasse. Escalões
+`corrente`, `1–30`, `31–60`, `61–90` e `+90` — os que qualquer contabilista
+reconhece, e que existem porque a probabilidade de cobrar cai a cada um deles.
+
+**Faturas sem prazo acordado têm escalão próprio.** Uma fatura-recibo é paga no
+ato e por isso não leva vencimento (§ 3.35). Se ficou por pagar, é dívida real —
+mas a sua idade não é medível contra um prazo que nunca existiu. Vai para
+`sem_prazo`, contada no total e fora dos escalões. Inventar-lhe um vencimento
+igual à emissão era exatamente o que o § 3.35 recusou fazer.
+
+**Notas de crédito abatem.** Um cliente a quem se creditou uma devolução não
+deve o valor devolvido, e um mapa que o ignore manda cobrar dinheiro que já não
+existe — e estraga a relação com o cliente mais depressa do que a dívida.
+
+**O que NÃO entra:** faturas anuladas e faturas pagas. Um mapa de dívida com o
+que já foi pago é um extrato, e serve outra pergunta.
+
+- **Backend (`/v1/receivables`, RBAC ADMIN):** `GET /` (carteira por cliente com
+  escalões e total) e `GET /:clientRefId` (as faturas em aberto desse cliente,
+  da mais antiga para a mais recente — é por essa que se começa a telefonar).
+  Aproveita `due_date` (§ 3.35) e a mesma soma que o limite de crédito usa, para
+  não haver duas definições de "dívida" a divergir.
+- **Frontend admin (`/financas`):** carteira com os escalões, ordenada pelo que
+  está mais vencido. Sem emojis.
+
+**Critérios de aceitação:** uma fatura a 30 dias emitida hoje aparece como
+corrente; passado o vencimento muda de escalão pelo número de dias; uma nota de
+crédito reduz o saldo do cliente; faturas pagas e anuladas não aparecem; e uma
+fatura sem prazo é contada no total sem entrar nos escalões de atraso.
+
+---
+
 ## 4. Requisitos Não Funcionais
 
 ### Cópias de segurança e restauro
@@ -1764,7 +1807,7 @@ O que já existe está marcado; o que falta é o que a operação real ainda ped
 - [x] Contas a receber e a pagar como lançamentos com vencimento e saldo (§ 3.17)
 - [x] Dashboard operacional: indicadores contados em SQL sobre a empresa inteira e fila de exceções ordenada por severidade (§ 3.39). **Corrigiu um painel que contava sobre a primeira página de encomendas e apresentava o resultado como o retrato da operação**
 - [x] Rentabilidade por pedido, rota, cliente e viatura, com o combustível MEDIDO dos abastecimentos e a cobertura de custos declarada em cada resposta (§ 3.40)
-- [ ] Contas a receber **por cliente**, ligadas às faturas — hoje o lançamento é avulso
+- [x] Contas a receber por cliente, ligadas às faturas, com antiguidade da dívida por escalões contados a partir do vencimento (§ 3.41)
 - [ ] SLA e ocorrências (§ 3.26)
 - [ ] Desempenho dos motoristas a partir de dados reais (§ 3.7 — hoje o motorista nasce com 100% de pontualidade e sucesso, valores que nunca são recalculados a partir das entregas)
 - [ ] Exportação para Excel (o CSV abre no Excel, mas não leva formatação nem várias folhas)

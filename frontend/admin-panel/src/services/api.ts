@@ -1055,6 +1055,45 @@ export interface DispatchPlan {
   summary: { eligible_orders: number; planned_orders: number; unassigned: number; drivers_used: number };
 }
 
+// ─── Contas a receber (spec § 3.41) ──────────────────────────────────────────
+
+export type AgingBucket = 'corrente' | 'd1_30' | 'd31_60' | 'd61_90' | 'd90_mais' | 'sem_prazo';
+
+export const AGING_LABELS: Record<AgingBucket, string> = {
+  corrente:  'Por vencer',
+  d1_30:     '1–30 dias',
+  d31_60:    '31–60 dias',
+  d61_90:    '61–90 dias',
+  d90_mais:  '+90 dias',
+  sem_prazo: 'Sem prazo',
+};
+
+export interface ReceivableClient {
+  client_ref_id: string | null;
+  client_name: string;
+  open_invoices: number;
+  credited_cents: number;
+  balance_cents: number;
+  oldest_days_overdue: number;
+  /** Saldo negativo: crédito a favor do cliente, não dívida. */
+  in_credit: boolean;
+  buckets: Record<AgingBucket, number>;
+}
+
+export interface ReceivablesPortfolio {
+  clients: ReceivableClient[];
+  totals: { balance_cents: number; clients: number; buckets: Record<AgingBucket, number> };
+}
+
+export interface ClientReceivables extends ReceivableClient {
+  invoices: Array<{
+    id: string; number: string; total_cents: number;
+    issued_at: string; due_date: string | null;
+    bucket: AgingBucket; days_overdue: number;
+  }>;
+  credit_notes: Array<{ id: string; number: string; total_cents: number }>;
+}
+
 // ─── Rentabilidade (spec § 3.40) ─────────────────────────────────────────────
 
 /** Comum a todas as linhas de margem. */
@@ -1764,6 +1803,13 @@ export const adminApi = {
 
   getRentabilidadeViaturas: (): Promise<{ vehicles: VehicleProfit[]; cost_coverage: CostCoverage }> =>
     fetchApi('/profitability/vehicles'),
+
+  // ─── Contas a receber (spec § 3.41) ─────────────────────────────────────────
+
+  getContasAReceber: (): Promise<ReceivablesPortfolio> => fetchApi('/receivables'),
+
+  getContasAReceberCliente: (clientRefId: string): Promise<ClientReceivables> =>
+    fetchApi(`/receivables/${encodeURIComponent(clientRefId)}`),
   
   createPedido: async (order: CreateOrderData): Promise<Order> => {
     const payload = {

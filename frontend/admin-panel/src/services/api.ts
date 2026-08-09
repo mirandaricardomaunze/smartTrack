@@ -1055,6 +1055,80 @@ export interface DispatchPlan {
   summary: { eligible_orders: number; planned_orders: number; unassigned: number; drivers_used: number };
 }
 
+// ─── SLA e ocorrências (spec § 3.42) ─────────────────────────────────────────
+
+export interface SlaSummary {
+  cumprido: number;
+  incumprido: number;
+  em_curso: number;
+  /** Encomendas cuja zona não tem prazo acordado — ficam fora da taxa. */
+  sem_prazo_acordado: number;
+  total: number;
+  /** `null` quando nada foi decidido ainda. */
+  compliance_pct: number | null;
+  measured: number;
+  zones_with_target: { with_target: number; total: number };
+}
+
+export type OccurrenceKind =
+  | 'recipient_absent' | 'wrong_address' | 'damage' | 'delay'
+  | 'refusal' | 'loss' | 'cod_mismatch';
+export type OccurrencePriority = 'low' | 'normal' | 'high' | 'critical';
+export type OccurrenceStatus = 'aberta' | 'em_curso' | 'resolvida' | 'cancelada';
+
+export const OCCURRENCE_KIND_LABELS: Record<OccurrenceKind, string> = {
+  recipient_absent: 'Destinatário ausente',
+  wrong_address:    'Morada incorreta',
+  damage:           'Dano',
+  delay:            'Atraso',
+  refusal:          'Recusa',
+  loss:             'Extravio',
+  cod_mismatch:     'Divergência de COD',
+};
+
+export const OCCURRENCE_STATUS_LABELS: Record<OccurrenceStatus, string> = {
+  aberta:    'Aberta',
+  em_curso:  'Em curso',
+  resolvida: 'Resolvida',
+  cancelada: 'Cancelada',
+};
+
+export interface OccurrenceInput {
+  kind: OccurrenceKind;
+  priority: OccurrencePriority;
+  title: string;
+  description?: string;
+  tracking_code?: string;
+}
+
+export interface Occurrence extends OccurrenceInput {
+  id: string;
+  code: string;
+  status: OccurrenceStatus;
+  due_at: string | null;
+  resolution: string | null;
+  opened_at: string;
+  closed_at: string | null;
+  /** Aberta para lá do prazo interno — é a que ninguém pegou. */
+  overdue: boolean;
+}
+
+export interface OccurrenceEvent {
+  id: string;
+  type: 'opened' | 'transition' | 'comment';
+  from_status: OccurrenceStatus | null;
+  to_status: OccurrenceStatus | null;
+  note: string | null;
+  created_at: string;
+}
+
+export interface OccurrenceStats {
+  abertas: number;
+  em_curso: number;
+  resolvidas: number;
+  vencidas: number;
+}
+
 // ─── Contas a receber (spec § 3.41) ──────────────────────────────────────────
 
 export type AgingBucket = 'corrente' | 'd1_30' | 'd31_60' | 'd61_90' | 'd90_mais' | 'sem_prazo';
@@ -1810,6 +1884,24 @@ export const adminApi = {
 
   getContasAReceberCliente: (clientRefId: string): Promise<ClientReceivables> =>
     fetchApi(`/receivables/${encodeURIComponent(clientRefId)}`),
+
+  // ─── SLA e ocorrências (spec § 3.42) ────────────────────────────────────────
+
+  getSlaSummary: (): Promise<SlaSummary> => fetchApi('/sla/summary'),
+
+  getOcorrencias: (status?: string): Promise<Occurrence[]> =>
+    fetchApi(`/incidents${status ? `?status=${encodeURIComponent(status)}` : ''}`),
+
+  getOcorrenciasStats: (): Promise<OccurrenceStats> => fetchApi('/incidents/stats'),
+
+  abrirOcorrencia: (data: OccurrenceInput): Promise<Occurrence> =>
+    fetchApi('/incidents', { method: 'POST', body: JSON.stringify(data) }),
+
+  moverOcorrencia: (id: string, to: OccurrenceStatus, note?: string): Promise<Occurrence> =>
+    fetchApi(`/incidents/${id}/transition`, { method: 'POST', body: JSON.stringify({ to, note }) }),
+
+  getOcorrenciaHistorico: (id: string): Promise<OccurrenceEvent[]> =>
+    fetchApi(`/incidents/${id}/history`),
   
   createPedido: async (order: CreateOrderData): Promise<Order> => {
     const payload = {

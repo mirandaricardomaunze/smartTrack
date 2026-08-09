@@ -1474,6 +1474,65 @@ fatura sem prazo é contada no total sem entrar nos escalões de atraso.
 
 ---
 
+### 3.42 SLA de entrega e ocorrências
+
+Implementa o § 3.26, que descrevia o requisito sem o realizar.
+
+#### O prazo é acordado, nunca deduzido
+
+Um SLA precisa de um **prazo prometido ao cliente** — horas por zona e por nível
+de serviço. Isso é política comercial, não dedução técnica, e por isso vive na
+zona de tarifação (`sla_hours_normal`, `sla_hours_express`), a preencher pela
+empresa.
+
+**O default é nulo, e uma zona sem prazo acordado não tem incumprimento** — tem
+`sem_prazo_acordado`. Seria tecnicamente possível derivar um prazo da mediana das
+entregas passadas, e seria pior do que não ter nenhum: um SLA medido contra o
+próprio desempenho anterior **nunca acusa incumprimento**, porque o alvo persegue
+o resultado. Uma operação que piora todos os meses continuaria a cumprir 100% do
+seu "SLA". Melhor não ter número do que ter um que mente.
+
+O relógio conta a partir da **criação da encomenda** e para na **entrega**. Uma
+encomenda ainda a caminho e já fora do prazo está incumprida agora, e não quando
+chegar — é essa a diferença entre um mapa de SLA e um relatório de autópsia.
+
+#### Ocorrências: o que distingue da fila de exceções
+
+A fila do § 3.39 mostra o que está parado; renova-se sozinha e não tem dono. Uma
+**ocorrência** é o oposto: alguém fica responsável, há um prazo para resolver, e
+o percurso fica registado. Serve o caso em que a resolução leva dias e passa por
+várias mãos — um extravio, um dano, uma divergência de COD.
+
+- **Espécies** (§ 3.26): destinatário ausente, morada incorreta, dano, atraso,
+  recusa, extravio e divergência de COD.
+- **Prioridade** define o prazo interno de resolução, e o prazo é gravado na
+  abertura: mudar a prioridade depois não pode reescrever o prazo que já estava a
+  correr, ou o cumprimento passa a ser ajustável a posteriori.
+- **Ciclo:** `aberta → em_curso → resolvida | cancelada`. Fechar **exige
+  motivo** — uma ocorrência que fecha sem explicação não ensina nada a ninguém e
+  torna o histórico inútil.
+- **O histórico é imutável e append-only**, como o registo de auditoria
+  (§ 3.21): cada transição fica com quem, quando e porquê. Sem isso, "esta
+  encomenda esteve três semanas parada" não tem resposta.
+- **Evidências** são referências e notas, não ficheiros. Guardar imagens aqui
+  duplicaria o mecanismo do § 3.28 e o problema de armazenamento com ele; a
+  fotografia do dano é a do comprovativo, e o que falta é apontar-lhe.
+
+- **Backend (`/v1/incidents`, RBAC ADMIN/SUPPORT):** quem atende o cliente é
+  quem abre a ocorrência — obrigar a passar pelo ADMIN faria a queixa ficar num
+  papel. `GET /`, `POST /`, `GET /:id`, `POST /:id/transition`,
+  `POST /:id/comment`. `GET /v1/sla/summary` e `GET /v1/sla/breaches`.
+- **Frontend admin:** SLA no `/relatorios`; ocorrências com fila própria. Sem
+  emojis.
+
+**Critérios de aceitação:** uma zona sem prazo acordado não produz
+incumprimentos; uma encomenda entregue dentro do prazo conta como cumprida e uma
+ainda em curso já fora do prazo conta como incumprida **agora**; fechar uma
+ocorrência sem motivo é recusado; alterar a prioridade não muda o prazo já a
+correr; e o histórico de transições não pode ser alterado nem apagado.
+
+---
+
 ## 4. Requisitos Não Funcionais
 
 ### Cópias de segurança e restauro
@@ -1808,7 +1867,7 @@ O que já existe está marcado; o que falta é o que a operação real ainda ped
 - [x] Dashboard operacional: indicadores contados em SQL sobre a empresa inteira e fila de exceções ordenada por severidade (§ 3.39). **Corrigiu um painel que contava sobre a primeira página de encomendas e apresentava o resultado como o retrato da operação**
 - [x] Rentabilidade por pedido, rota, cliente e viatura, com o combustível MEDIDO dos abastecimentos e a cobertura de custos declarada em cada resposta (§ 3.40)
 - [x] Contas a receber por cliente, ligadas às faturas, com antiguidade da dívida por escalões contados a partir do vencimento (§ 3.41)
-- [ ] SLA e ocorrências (§ 3.26)
+- [x] SLA de entrega com prazo acordado por zona e ocorrências com dono, prazo e histórico imutável (§ 3.42, implementa o § 3.26)
 - [ ] Desempenho dos motoristas a partir de dados reais (§ 3.7 — hoje o motorista nasce com 100% de pontualidade e sucesso, valores que nunca são recalculados a partir das entregas)
 - [ ] Exportação para Excel (o CSV abre no Excel, mas não leva formatação nem várias folhas)
 - [ ] Multifilial

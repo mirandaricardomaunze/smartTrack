@@ -59,6 +59,7 @@ export { MonitoringFactory } from './factories/monitoring.factory';
 export { OperationsFactory } from './factories/operations.factory';
 export { ProfitabilityFactory } from './factories/profitability.factory';
 export { ReceivablesFactory, HOJE as RECEIVABLES_TODAY } from './factories/receivables.factory';
+export { SlaFactory, AGORA as SLA_NOW } from './factories/sla.factory';
 
 // Percursos (conduzem vários módulos pela ordem da operação, não geram dados)
 export { DeliveryJourney } from './journeys/delivery-journey';
@@ -114,3 +115,12 @@ export type { TestMeasuredRequest, TestObservation, TestErrorEvent } from './fac
 export type { TestOperationException, ExceptionKind } from './factories/operations.factory';
 export type { TestFuelFill, TestVehicleCost, TestCostModel } from './factories/profitability.factory';
 export type { TestReceivableInvoice, AgingBucket } from './factories/receivables.factory';
+// `IncidentKind`/`IncidentStatus` já vinham de professionalization.factory (que
+// modelou o § 3.26 antes de ele ser implementado). Reexportados com prefixo
+// para os dois vocabulários poderem coexistir sem colidir.
+export type {
+  TestSlaOrder, TestSlaZone, TestIncidentInput,
+  IncidentKind as OccurrenceKind,
+  IncidentPriority as OccurrencePriority,
+  IncidentStatus as OccurrenceStatus,
+} from './factories/sla.factory';

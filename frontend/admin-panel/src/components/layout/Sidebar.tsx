@@ -228,6 +228,9 @@ const NAV_GROUPS_STATIC: Omit<NavItem, 'badge' | 'badgeVariant'>[][] = [
     { href: '/motoristas', label: 'Motoristas',    icon: <IconDriver /> },
     { href: '/frota',      label: 'Frota',         icon: <IconDriver /> },
     { href: '/rotas',      label: 'Rotas',         icon: <IconMap /> },
+    // Ocorrências ficam nas Operações e não na Análise: são trabalho a
+    // fazer, e trabalho a fazer não se procura dentro de um relatório.
+    { href: '/ocorrencias', label: 'Ocorrências',  icon: <IconActivity /> },
   ],
   // ANALYSIS
   [

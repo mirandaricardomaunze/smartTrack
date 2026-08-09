@@ -1057,6 +1057,9 @@ export interface DispatchPlan {
 
 // ─── Desempenho dos motoristas (spec § 3.43) ─────────────────────────────────
 
+/** Relatórios que o backend sabe exportar em Excel (spec § 3.44). */
+export type ExcelReport = 'rentabilidade' | 'contas-a-receber' | 'desempenho' | 'ocorrencias';
+
 /**
  * NÃO tem `customer_rating`: nunca existiu recolha de avaliações no sistema, e
  * os 5,0 que o cadastro mostrava eram inventados.
@@ -2478,6 +2481,39 @@ export const adminApi = {
     const disposition = response.headers.get('Content-Disposition') ?? '';
     const match = /filename="([^"]+)"/.exec(disposition);
     return { filename: match?.[1] ?? `SAFT_${period.replace(/-/g, '')}.xml`, xml: await response.text() };
+  },
+
+  /**
+   * Descarrega um relatório em Excel (spec § 3.44).
+   *
+   * Não passa por `fetchApi` porque a resposta é binária. O nome do ficheiro vem
+   * do servidor: é lá que se sabe qual foi o período efetivamente exportado, e
+   * inventá-lo aqui daria dois ficheiros com o mesmo nome e conteúdos
+   * diferentes.
+   */
+  downloadExcel: async (report: ExcelReport, params: Record<string, string> = {}): Promise<void> => {
+    const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
+    const query = new URLSearchParams(params).toString();
+    const response = await fetch(`${API_URL}/${API_VERSION}/exports/${report}${query ? `?${query}` : ''}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!response.ok) {
+      let message = '';
+      try { message = (await response.clone().json()).error; } catch { /* corpo não-JSON */ }
+      throw new Error(message || `API Error: ${response.status}`);
+    }
+
+    const disposition = response.headers.get('Content-Disposition') ?? '';
+    const filename = /filename="([^"]+)"/.exec(disposition)?.[1]
+      ?? `${report}-${new Date().toISOString().slice(0, 10)}.xlsx`;
+
+    const url = URL.createObjectURL(await response.blob());
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    link.click();
+    // Revogar de imediato cancelaria o download em alguns browsers.
+    window.setTimeout(() => URL.revokeObjectURL(url), 5000);
   },
 
   // ─── Armazéns (gestão dinâmica) ────────────────────────────────────────────

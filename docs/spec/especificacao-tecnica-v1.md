@@ -1586,6 +1586,49 @@ nenhum campo de avaliação do cliente enquanto não houver recolha.
 
 ---
 
+### 3.44 Exportação para Excel
+
+O CSV que existia abre no Excel, mas **os números chegam como texto e não somam**
+— quem recebe o mapa de dívida tem de reformatar coluna a coluna antes de o
+poder usar. E um relatório por ficheiro obriga a abrir seis e a colá-los à mão.
+É por isso que se pede Excel e não CSV; não é preferência de formato.
+
+**Escrito de raiz, sem biblioteca.** Um `.xlsx` é um ZIP com meia dúzia de
+ficheiros XML. As bibliotecas do costume trazem dezenas de megabytes e uma
+superfície de manutenção grande para produzir uma grelha de células — e o
+projeto já seguiu este caminho no motor de PDF (§ 3.20) e no gerador de Code128
+(§ 3.15). O escritor faz o que os relatórios precisam: várias folhas, cabeçalho a
+negrito, larguras de coluna e **números como números**.
+
+**O que deliberadamente não faz:** fórmulas, gráficos e formatação condicional —
+decoração que não muda o que se faz com o ficheiro. As datas vão como texto ISO,
+legível e ordenável, sem a ambiguidade do calendário de 1900 que o formato
+arrasta desde os anos 80.
+
+**Valores em unidades, não em centavos.** O sistema guarda centavos porque é a
+única forma de somar dinheiro sem erro; a folha recebe meticais, porque é o que
+a pessoa vai somar. A conversão é do exportador — obrigar quem abre a dividir
+por cem seria devolver o problema do CSV por outra via.
+
+**Uma exportação vazia continua a ser um ficheiro válido**, com cabeçalhos e sem
+linhas. Devolver erro quando não há dados obrigaria quem exporta a distinguir
+"correu mal" de "não há nada", e a resposta certa a "quanto me devem?" pode
+mesmo ser "nada".
+
+- **Backend (`/v1/exports`, RBAC conforme o relatório de origem):** cada
+  exportação **reutiliza o caso de uso do relatório** em vez de repetir a
+  consulta — dois caminhos para o mesmo número acabariam a divergir, e o ficheiro
+  exportado é justamente o que sai da empresa e vai ser discutido.
+- **Frontend admin:** botão de Excel ao lado do de PDF/CSV onde o relatório já
+  existe. Sem emojis.
+
+**Critérios de aceitação:** o ficheiro abre num leitor de folhas de cálculo; os
+valores monetários somam sem reformatação; um nome com `&` não corrompe o
+ficheiro; várias folhas aparecem no mesmo livro; e uma exportação sem dados
+produz um ficheiro válido com cabeçalhos.
+
+---
+
 ## 4. Requisitos Não Funcionais
 
 ### Cópias de segurança e restauro
@@ -1922,7 +1965,7 @@ O que já existe está marcado; o que falta é o que a operação real ainda ped
 - [x] Contas a receber por cliente, ligadas às faturas, com antiguidade da dívida por escalões contados a partir do vencimento (§ 3.41)
 - [x] SLA de entrega com prazo acordado por zona e ocorrências com dono, prazo e histórico imutável (§ 3.42, implementa o § 3.26)
 - [x] Desempenho dos motoristas medido das encomendas, com `null` onde não há amostra e sem a avaliação de cliente que nunca foi recolhida (§ 3.43, implementa o § 3.7)
-- [ ] Exportação para Excel (o CSV abre no Excel, mas não leva formatação nem várias folhas)
+- [x] Exportação para Excel com escritor próprio de `.xlsx`: várias folhas por livro, valores em meticais que somam sem reformatação, e a ressalva de custos a viajar dentro do ficheiro (§ 3.44)
 - [ ] Multifilial
 
 ### Prioridade 4 — diferenciais avançados

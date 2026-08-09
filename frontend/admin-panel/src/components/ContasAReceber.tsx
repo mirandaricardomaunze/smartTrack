@@ -21,6 +21,7 @@ import {
   type ClientReceivables,
 } from '@/services/api';
 import { Button, Card } from '@/components/ui';
+import BotaoExcel from '@/components/BotaoExcel';
 
 function mzn(cents: number): string {
   return new Intl.NumberFormat('pt-MZ', { style: 'currency', currency: 'MZN' }).format((cents ?? 0) / 100);
@@ -69,11 +70,16 @@ export default function ContasAReceber() {
 
   return (
     <Card className="flex flex-col gap-4">
-      <div>
-        <h3 className="text-base font-semibold text-slate-100">Contas a receber</h3>
-        <p className="text-xs text-slate-500">
-          Faturas emitidas e por pagar, com a antiguidade contada a partir do vencimento.
-        </p>
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div>
+          <h3 className="text-base font-semibold text-slate-100">Contas a receber</h3>
+          <p className="text-xs text-slate-500">
+            Faturas emitidas e por pagar, com a antiguidade contada a partir do vencimento.
+          </p>
+        </div>
+        {/* A carteira é o mapa que vai para a reunião de cobrança — com cada
+            escalão na sua coluna, para poder ser ordenado e filtrado (§ 3.44). */}
+        <BotaoExcel report="contas-a-receber" />
       </div>
 
       {erro && <p role="alert" className="text-xs text-red-400">{erro}</p>}

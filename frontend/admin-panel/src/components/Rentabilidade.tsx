@@ -23,6 +23,7 @@ import {
   type CostCoverage,
 } from '@/services/api';
 import { Button, Card } from '@/components/ui';
+import BotaoExcel from '@/components/BotaoExcel';
 
 function mzn(cents: number): string {
   return new Intl.NumberFormat('pt-MZ', { style: 'currency', currency: 'MZN' }).format((cents ?? 0) / 100);
@@ -86,12 +87,15 @@ export default function Rentabilidade() {
           <h3 className="text-base font-semibold text-slate-100">Rentabilidade</h3>
           <p className="text-xs text-slate-500">Receita menos os custos que o sistema consegue medir.</p>
         </div>
-        <div className="flex gap-1">
+        <div className="flex gap-1 items-center">
           {(['clientes', 'rotas', 'viaturas'] as Aba[]).map((a) => (
             <Button key={a} size="sm" variant={aba === a ? 'primary' : 'ghost'} onClick={() => setAba(a)}>
               {a[0].toUpperCase() + a.slice(1)}
             </Button>
           ))}
+          {/* O ficheiro leva as três dimensões e a cobertura de custos, não só a
+              aba aberta: quem exporta quer o relatório, não o ecrã (§ 3.44). */}
+          <BotaoExcel report="rentabilidade" />
         </div>
       </div>
 

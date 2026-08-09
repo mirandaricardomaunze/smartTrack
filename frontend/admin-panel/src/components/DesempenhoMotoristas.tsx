@@ -15,6 +15,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { adminApi, type DriverPerformance } from '@/services/api';
 import { Card } from '@/components/ui';
+import BotaoExcel from '@/components/BotaoExcel';
 
 function mzn(cents: number): string {
   return new Intl.NumberFormat('pt-MZ', { style: 'currency', currency: 'MZN' }).format((cents ?? 0) / 100);
@@ -50,11 +51,14 @@ export default function DesempenhoMotoristas() {
 
   return (
     <Card className="flex flex-col gap-3">
-      <div>
-        <h3 className="text-base font-semibold text-slate-100">Desempenho</h3>
-        <p className="text-xs text-slate-500">
-          Calculado das encomendas atribuídas a cada motorista, não de valores guardados no cadastro.
-        </p>
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div>
+          <h3 className="text-base font-semibold text-slate-100">Desempenho</h3>
+          <p className="text-xs text-slate-500">
+            Calculado das encomendas atribuídas a cada motorista, não de valores guardados no cadastro.
+          </p>
+        </div>
+        <BotaoExcel report="desempenho" />
       </div>
 
       {erro && <p role="alert" className="text-xs text-red-400">{erro}</p>}

@@ -14,6 +14,7 @@ import React, { useState, useEffect } from 'react';
 import { adminApi, type SlaSummary } from '@/services/api';
 import { PageHeader, StatCard } from '@/components/ui';
 import Ocorrencias from '@/components/Ocorrencias';
+import BotaoExcel from '@/components/BotaoExcel';
 
 export default function OcorrenciasPage() {
   const [sla, setSla] = useState<SlaSummary | null>(null);
@@ -30,6 +31,7 @@ export default function OcorrenciasPage() {
       <PageHeader
         title="Ocorrências e SLA"
         description="Cumprimento do prazo prometido e o que está à espera de resolução."
+        actions={<BotaoExcel report="ocorrencias" />}
       />
 
       {erro && (

@@ -76,11 +76,27 @@ async function getActiveRouteForDriver(driverId) {
  * @param {{ stops: object[], origin?: {lat: number, lng: number} }} dto
  * @returns {object} Resultado da otimização
  */
+/**
+ * Opções de tempo da rota (spec § 3.48).
+ *
+ * Só têm efeito quando alguma parada traz janela — sem janelas, o motor faz
+ * exatamente o que fazia antes.
+ *
+ * @param {{ departure_at?: string, speed_kmh?: number, service_minutes?: number }} dto
+ */
+function routeOptions(dto) {
+  return {
+    departure_at:    dto.departure_at,
+    speed_kmh:       dto.speed_kmh,
+    service_minutes: dto.service_minutes,
+  };
+}
+
 function previewOptimization(dto) {
   if (!Array.isArray(dto.stops) || dto.stops.length === 0) throw new EmptyRouteError();
   dto.stops.forEach(validateStop);
 
-  const resultado = optimizeStops(dto.stops, dto.origin);
+  const resultado = optimizeStops(dto.stops, dto.origin, routeOptions(dto));
 
   return {
     ...resultado,
@@ -100,7 +116,7 @@ async function createRoute(dto) {
 
   dto.stops.forEach(validateStop);
 
-  const otimizado = optimizeStops(dto.stops, dto.origin);
+  const otimizado = optimizeStops(dto.stops, dto.origin, routeOptions(dto));
 
   const rota = createRouteEntity(generateRouteId(), {
     driver_id:   dto.driver_id,
@@ -112,6 +128,16 @@ async function createRoute(dto) {
     `[audit] Rota ${rota.id} criada para motorista ${dto.driver_id} — ` +
     `${otimizado.optimized_count} parada(s) otimizada(s), ${otimizado.distance_km}km`,
   );
+
+  // As janelas que a rota não consegue cumprir ficam no registo (§ 3.48). Quem
+  // planeou vê-as na resposta; quem for investigar amanhã a entrega falhada
+  // encontra aqui a prova de que já se sabia no momento do despacho.
+  if (otimizado.window_violations?.length) {
+    console.warn(
+      `[audit] Rota ${rota.id}: ${otimizado.window_violations.length} janela(s) de entrega ` +
+      `não cumpríveis — ${otimizado.window_violations.map((v) => v.order_id).join(', ')}`,
+    );
+  }
 
   const persistida = await RouteRepository.create(rota);
   return { ...persistida, summary: summarizeRoute(persistida), optimization: otimizado };
@@ -142,7 +168,7 @@ async function reoptimizeRoute(id, dto = {}) {
   const resolvidas = rota.stops.filter((s) => s.status !== 'pending');
   const pendentes  = rota.stops.filter((s) => s.status === 'pending');
 
-  const otimizado = optimizeStops([...pendentes, ...novas], dto.origin);
+  const otimizado = optimizeStops([...pendentes, ...novas], dto.origin, routeOptions(dto));
 
   const stops = [...resolvidas, ...otimizado.stops].map((s, i) => ({ ...s, sequence: i + 1 }));
 

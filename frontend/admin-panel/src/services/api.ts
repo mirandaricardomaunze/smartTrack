@@ -1272,6 +1272,74 @@ export interface CostCoverage {
 
 // ─── Dashboard operacional (spec § 3.39) ─────────────────────────────────────
 
+// ─── Previsão e risco (spec § 3.46 e § 3.47) ─────────────────────────────────
+
+/**
+ * Previsão de um segmento.
+ *
+ * `enough: false` significa que NÃO HÁ previsão — `p50_hours` e `p90_hours`
+ * vêm a `null` e não devem ser mostrados como zero.
+ */
+export interface DeliveryPrediction {
+  zone: string | null;
+  service_level: string | null;
+  sample_size: number;
+  p50_hours: number | null;
+  p90_hours: number | null;
+  enough: boolean;
+  /** `segment` (exato), `zone` (recurso, mistura níveis de serviço) ou null. */
+  basis: 'segment' | 'zone' | null;
+  reason?: string;
+  promise: {
+    comparable: boolean;
+    keeps_promise: boolean | null;
+    gap_hours: number | null;
+    promised_hours?: number;
+  };
+}
+
+export interface DeliveryPredictionsResult {
+  days: number;
+  min_sample: number;
+  measured_deliveries: number;
+  segments: DeliveryPrediction[];
+}
+
+export interface RiskOrder {
+  id: string;
+  tracking_code: string;
+  current_status: string;
+  driver_id?: string | null;
+  zone?: string | null;
+  level?: 'atrasada' | 'em_risco' | 'no_prazo' | 'sem_base';
+  /** `sla` (prometido) ou `p90` (medido) — sem isto o juízo é incontestável. */
+  basis?: string | null;
+  limit_hours?: number | null;
+  elapsed_hours?: number;
+  hours_in_status?: number;
+}
+
+export interface RouteDeviation {
+  route_id: string;
+  driver_id: string | null;
+  deviations: Array<{
+    order_id: string;
+    planned_position: number | null;
+    actual_position: number;
+    kind: 'sequencia' | 'fora_do_plano';
+  }>;
+}
+
+export interface RisksResult {
+  in_flight: number;
+  late: RiskOrder[];
+  at_risk: RiskOrder[];
+  stalled: RiskOrder[];
+  route_deviations: RouteDeviation[];
+  geographic_deviation: { detected: boolean; reason: string };
+  basis: { predicted_segments: number; measured_deliveries: number; status_medians: number };
+}
+
 export interface OperationsSummary {
   orders: {
     total: number;
@@ -1925,6 +1993,12 @@ export const adminApi = {
 
   getOperationsSummary: (): Promise<OperationsSummary> =>
     fetchApi<OperationsSummary>('/operations/summary'),
+
+  getPrevisoesEntrega: (days = 180): Promise<DeliveryPredictionsResult> =>
+    fetchApi<DeliveryPredictionsResult>(`/predictions/delivery-time?days=${days}`),
+
+  getRiscos: (days = 180): Promise<RisksResult> =>
+    fetchApi<RisksResult>(`/predictions/risks?days=${days}`),
 
   getOperationsExceptions: (): Promise<OperationsExceptions> =>
     fetchApi<OperationsExceptions>('/operations/exceptions'),

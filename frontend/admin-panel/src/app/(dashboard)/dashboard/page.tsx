@@ -23,6 +23,7 @@ import { adminApi, Pedido, BackendDriver, type OperationsSummary } from '@/servi
 import { usePreferences, densityClass } from '@/hooks/usePreferences';
 import { StatCard } from '@/components/ui';
 import FilaExcecoes from '@/components/FilaExcecoes';
+import RiscoOperacional from '@/components/RiscoOperacional';
 
 // ────────────────────────────────────────────────────────────────────────────
 // Vocabulário de status — espelha OrderStatus (backend/shared/types)
@@ -327,6 +328,10 @@ export default function DashboardPage() {
       {/* ── À espera de uma decisão (§ 3.39) ──
           Substitui a lista antiga, que só via a primeira página de encomendas e
           só conhecia dois estados. A ordem e o conteúdo vêm do servidor. */}
+      {/* O que ainda dá para salvar vem ANTES do que já falhou (§ 3.47): uma
+          lista de trabalho por fazer no fim da página é uma lista que não se lê. */}
+      <RiscoOperacional />
+
       <FilaExcecoes refreshMs={prefs.refreshIntervalSec * 1000} />
 
       {/* ── Movimentação recente ── */}

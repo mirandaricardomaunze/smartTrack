@@ -15,8 +15,9 @@
  *
  * LIMITES CONHECIDOS (§ 3.2 pede também estes fatores, ainda não cobertos):
  *   - Não considera trânsito em tempo real — exige Directions API.
- *   - Não considera janelas de entrega.
  *   - Usa distância geodésica, não distância de condução pela malha viária.
+ * As janelas de entrega passaram a ser consideradas (§ 3.48, ),
+ * mas SÓ quando as paradas as trazem: sem janelas, o caminho é o descrito acima.
  * A capacidade do veículo é verificada FORA daqui: o gateway recusa a rota
  * antes de a otimizar quando a carga não cabe no veículo do motorista
  * (§ 3.33, `application/dispatch.service.js`). Este módulo só vê paradas —
@@ -173,6 +174,8 @@ function twoOpt(origin, stops) {
  * @param {object[]} stops Paradas cruas (já validadas pela entidade)
  * @param {{lat: number, lng: number}} [origin] Ponto de partida (ex.: GPS do motorista).
  *   Omitido: usa a primeira parada com coordenadas como origem.
+ * @param {{ departure_at?: string, speed_kmh?: number, service_minutes?: number }} [opts]
+ *   Só têm efeito quando alguma parada traz janela (§ 3.48).
  * @returns {{
  *   stops: object[],
  *   distance_km: number,
@@ -181,7 +184,7 @@ function twoOpt(origin, stops) {
  *   improvement_km: number
  * }}
  */
-function optimizeStops(stops, origin) {
+function optimizeStops(stops, origin, opts = {}) {
   const comCoordenadas = stops.filter((s) => typeof s.lat === 'number' && typeof s.lng === 'number');
   const semCoordenadas = stops.filter((s) => typeof s.lat !== 'number' || typeof s.lng !== 'number');
 
@@ -201,6 +204,35 @@ function optimizeStops(stops, origin) {
     : comCoordenadas[0];
 
   const distanciaOriginal = routeDistanceKm(partida, comCoordenadas);
+
+  // Janelas de entrega (§ 3.48). SÓ quando alguma parada as traz: sem elas, o
+  // caminho é exatamente o de antes — quilómetros e mais nada. Uma otimização
+  // que mudasse de comportamento por causa de um campo opcional vazio seria uma
+  // alteração silenciosa de todas as rotas existentes.
+  // O require fica aqui dentro e não no topo: time-windows.js precisa do
+  // haversine deste ficheiro, e um ciclo resolvido no carregamento deixaria uma
+  // das duas metades com exports vazios. Corre uma vez por otimização, não por
+  // parada.
+  const { hasWindows, orderByWindows } = require('./time-windows');
+
+  if (hasWindows(comCoordenadas)) {
+    const comJanelas = orderByWindows(comCoordenadas, partida, opts);
+    const distanciaJanelas = routeDistanceKm(partida, comJanelas.stops);
+
+    return {
+      stops:             [...comJanelas.stops, ...semCoordenadas],
+      distance_km:       Number(distanciaJanelas.toFixed(3)),
+      optimized_count:   comJanelas.stops.length,
+      unoptimized_stops: semCoordenadas.map((s) => s.order_id),
+      improvement_km:    Number(Math.max(0, distanciaOriginal - distanciaJanelas).toFixed(3)),
+      arrival_estimates: comJanelas.arrival_estimates,
+      // Devolvidas mesmo vazias: a ausência do campo leria-se como "não foram
+      // verificadas", e a lista vazia diz que foram e que cabem todas.
+      window_violations: comJanelas.window_violations,
+      speed_kmh:         comJanelas.speed_kmh,
+      speed_basis:       comJanelas.speed_basis,
+    };
+  }
 
   const ordenadas = twoOpt(partida, nearestNeighbour(partida, comCoordenadas));
   const distanciaFinal = routeDistanceKm(partida, ordenadas);

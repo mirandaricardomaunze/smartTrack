@@ -1683,6 +1683,154 @@ nunca deixa passar dados de outra empresa.
 
 ---
 
+### 3.46 Previsão do tempo de entrega
+
+"Quando chega?" é a pergunta que o cliente faz, e hoje a resposta é o prazo
+prometido (§ 3.42) — que é o que a empresa **disse**, não o que a empresa
+**faz**. A previsão responde com o que aconteceu às encomendas parecidas.
+
+**Prevê-se do histórico medido, e só dele.** Nada de fatores inventados nem de
+pesos afinados a olho: a duração de cada entrega concluída é um facto que a base
+já guarda, e a previsão é a leitura desses factos.
+
+**Sem amostra, não há previsão.** Abaixo de **20 entregas concluídas** no
+segmento, a resposta é "sem base para prever", acompanhada da contagem que
+falta. Um sistema que responde "24 horas" a partir de três entregas está a
+inventar com o aspeto de quem mediu — e a previsão vai ser lida por um cliente
+que decide com ela.
+
+**Percentis, nunca média.** Uma encomenda esquecida três semanas num armazém
+desloca uma média o suficiente para a tornar inútil, e não desloca a mediana. A
+resposta é um **intervalo P50–P90**: metade chega até ao primeiro número, nove em
+cada dez até ao segundo.
+
+**Um intervalo, e não um instante.** Um número único lê-se como promessa, e uma
+promessa falhada custa mais do que uma estimativa larga.
+
+**Segmenta-se por destino e nível de serviço** — os dois fatores que mudam mesmo
+a duração. Não por motorista: uma previsão que muda com o nome de quem entrega
+transforma-se numa avaliação da pessoa, feita com uma amostra que nunca foi
+recolhida para isso (§ 3.43).
+
+**A escada de recurso pára antes de mentir.** Segmento exato → mesma zona,
+qualquer nível de serviço → **sem previsão**. Nunca a média da empresa: aplicar a
+Nampula o que se mediu em Maputo é uma afirmação confiante sobre uma rota que
+ninguém percorreu.
+
+**Conta-se do registo à entrega**, porque é essa a espera que o cliente vive.
+Medir a partir da recolha daria um número melhor e responderia a outra pergunta.
+
+**A comparação com o prometido é o resultado mais valioso.** Quando a zona tem
+prazo acordado e o P90 medido o excede, isso aparece dito: prometem-se 24 horas e
+entrega-se em 38 em nove de cada dez casos. É a única saída deste módulo que
+muda uma decisão de gestão em vez de informar um cliente.
+
+- **Backend (`GET /v1/predictions/delivery-time`, ADMIN; usado também pelo
+  rastreio público):** segmentos com `sample_size`, `p50_hours`, `p90_hours`,
+  `basis` e, onde exista prazo acordado, o desvio face a ele.
+- **Frontend:** no rastreio, uma linha com o intervalo — **ausente**, e não
+  vazia, quando não há amostra. Sem emojis.
+
+**Critérios de aceitação:** um segmento com menos de 20 entregas não produz
+previsão nenhuma; a mediana não se move quando se acrescenta uma encomenda
+absurda; o recurso à zona é assinalado como tal; e uma promessa que a medição
+desmente aparece dita, não escondida.
+
+---
+
+### 3.47 Deteção de atrasos e desvios
+
+O painel de exceções (§ 3.39) mostra o que **já falhou**. Isto procura o que
+ainda vai a tempo de ser salvo: a encomenda que ainda não está atrasada mas vai
+estar, e a rota que deixou de ser cumprida como foi planeada.
+
+**Atraso mede-se contra o que se mediu, não contra um palpite.** Uma encomenda
+em curso está atrasada quando ultrapassa o P90 do seu segmento (§ 3.46) ou o
+prazo acordado (§ 3.42), o que existir. Sem nenhum dos dois **não se declara
+atraso** — chamar atrasada a uma encomenda sem prazo nem histórico é inventar um
+incumprimento que ninguém prometeu, e destrói a confiança na lista inteira.
+
+**Prever o atraso antes de ele acontecer é a única coisa que muda alguma.** Uma
+encomenda que passou o P50 e ainda não saiu para entrega é sinalizada como *em
+risco* — ainda dá para agir. Sinalizada só depois do prazo, a lista é um
+relatório de más notícias.
+
+**Parada é diferente de atrasada.** Uma encomenda pode estar dentro do prazo e
+parada há quatro dias no mesmo estado; outra pode estar fora do prazo e a andar.
+São dois problemas com duas respostas, e um só número esconderia ambos. O tempo
+normal de cada estado é medido do histórico, pelas mesmas regras do § 3.46.
+
+**Desvio é de sequência, não de estrada.** A rota é planeada com uma ordem de
+paradas (§ 3.2); entregar a sétima antes da segunda é um desvio detetável e
+acionável. **O desvio geográfico não é detetado, e isso é dito**: o sistema
+guarda a última posição conhecida de cada motorista, não o rasto do percurso —
+sem rasto não há como saber se alguém saiu do caminho, e um módulo que
+sugerisse o contrário estaria a afirmar uma vigilância que não existe.
+
+**Um desvio de sequência não é uma acusação.** Trânsito cortado, cliente ausente
+e uma recolha urgente a meio são motivos legítimos para trocar a ordem. A lista
+diz o que aconteceu; não classifica ninguém.
+
+- **Backend (`GET /v1/predictions/risks`, ADMIN e SUPPORT):** encomendas em risco
+  e atrasadas, encomendas paradas, e desvios de sequência por rota — cada uma com
+  a base do juízo (`p90`, `sla` ou `historico_do_estado`) à vista.
+- **Frontend admin:** um bloco no painel operacional, antes das exceções já
+  consumadas. Sem emojis.
+
+**Critérios de aceitação:** uma encomenda sem prazo e sem histórico nunca é
+declarada atrasada; o risco aparece antes do incumprimento; parada e atrasada são
+distinguíveis; a base de cada juízo é visível; e o desvio geográfico é declarado
+como não detetado em vez de simulado.
+
+---
+
+### 3.48 Otimização de rotas com janelas e prioridade
+
+O motor do § 3.2 minimiza quilómetros. Uma rota com o mínimo de quilómetros
+entrega alegremente às 16h uma encomenda combinada para as 9h–12h — e o cliente
+não estava lá. **O que falta não é um algoritmo melhor; é dizer ao algoritmo o
+que realmente custa.**
+
+**A janela combinada manda sobre a distância.** Chegar cedo é esperar; chegar
+tarde é falhar a entrega, voltar amanhã e pagar a viagem duas vezes. Uma ordem
+alguns quilómetros mais longa que cumpre as janelas é mais barata do que a mais
+curta que as falha.
+
+**Uma janela impossível é reportada, nunca violada em silêncio.** Se as paradas
+não cabem todas nas suas janelas, o motor devolve a melhor ordem que encontrou
+**e a lista das que não conseguiu servir a tempo**. Um plano que esconde o
+incumprimento faz o motorista descobri-lo à porta do cliente, que é o pior sítio
+e a pior hora.
+
+**A prioridade não atropela a janela.** Um expresso entregue às 20h quando a
+janela fechou às 12h não é uma entrega prioritária — é uma entrega falhada mais
+cedo na lista. A prioridade decide entre paradas igualmente possíveis.
+
+**A velocidade é medida quando há histórico, e assumida quando não há — e a
+resposta diz qual dos dois foi.** Converter distância em tempo exige uma
+velocidade; sem entregas suficientes na zona, qualquer km/h é um palpite. O
+palpite é aceitável, escondê-lo não: o plano é usado para prometer horas a
+clientes.
+
+**Continua sem trânsito em tempo real e sem malha viária.** As distâncias são
+geodésicas (§ 3.2). Uma cidade com rio pelo meio tem percursos muito mais longos
+do que a linha reta sugere, e nenhuma quantidade de otimização o corrige — só
+uma Directions API o faria.
+
+- **Backend (`routes-service/src/domain/optimizer.js`):** `optimizeStops` aceita
+  `window_start`/`window_end`/`priority` por parada e `departure_at`/`speed_kmh`
+  na rota; devolve `arrival_estimates`, `window_violations` e `speed_basis`.
+  Sem estes campos, o comportamento é **exatamente** o de hoje.
+- **Frontend admin:** as janelas incumpridas aparecem no despacho, antes de a
+  rota ser aceite. Sem emojis.
+
+**Critérios de aceitação:** uma rota sem janelas produz o mesmo resultado de
+hoje; uma janela que caberia numa ordem diferente passa a ser cumprida; uma
+janela impossível vem listada e não silenciada; a prioridade nunca faz falhar
+uma janela; e a base da velocidade vem sempre declarada.
+
+---
+
 ## 4. Requisitos Não Funcionais
 
 ### Cópias de segurança e restauro
@@ -2026,9 +2174,10 @@ O que já existe está marcado; o que falta é o que a operação real ainda ped
 
 Só depois de a operação estar estável.
 
-- [ ] Previsão do horário de entrega
-- [ ] Otimização inteligente de rotas (capacidade, janelas, turnos, trânsito, replaneamento)
-- [ ] Deteção de atrasos e desvios
+- [x] Previsão do horário de entrega a partir do histórico medido: intervalo P50–P90 por destino e nível de serviço, recusa de prever abaixo de 20 entregas, e confronto com o prazo prometido (§ 3.46)
+- [x] Otimização de rotas com janelas de entrega e prioridade, com as janelas incumpríveis reportadas em vez de violadas em silêncio e a velocidade sempre declarada como medida ou assumida (§ 3.48). Capacidade já vinha do § 3.33.
+  - [ ] Por fazer: trânsito em tempo real e distância pela malha viária — ambos exigem uma Directions API (§ 6); turnos e replaneamento a meio da rota.
+- [x] Deteção de atrasos e desvios: risco antes do incumprimento, paragem distinta de atraso, desvio de sequência da rota, e o desvio geográfico declarado como não detetado por não haver rasto de GPS (§ 3.47)
 
 ---
 

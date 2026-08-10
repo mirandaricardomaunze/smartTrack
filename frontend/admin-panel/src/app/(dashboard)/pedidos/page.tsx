@@ -6,7 +6,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { adminApi, Pedido, HistoricoItem, type BackendDriver, type Warehouse, type DeliveryFailureReason, type CodMethod, type Client, type PricingZone, type QuoteBreakdown, type ServiceLevel, type OrdersStatsResponse, COD_METHOD_LABELS } from '@/services/api';
+import { adminApi, Pedido, HistoricoItem, type BackendDriver, type Warehouse, type DeliveryFailureReason, type CodMethod, type Client, type PricingZone, type QuoteBreakdown, type ServiceLevel, type OrdersStatsResponse, type PodImages, type ReturnReason, type Branch, COD_METHOD_LABELS, RETURN_REASON_LABELS } from '@/services/api';
 import { printInvoice } from '@/services/invoicePrint';
 import { printLabels, type LabelData } from '@/services/labelPrint';
 import { usePreferences, densityClass } from '@/hooks/usePreferences';
@@ -140,6 +140,11 @@ export default function PedidosPage() {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
+  // Filial de ORIGEM (spec § 3.45). Só aparece a quem tem mais do que uma base:
+  // um seletor com uma única opção é ruído, e a quem está restrito a uma filial
+  // o backend já filtra — o seletor não lhe daria escolha nenhuma.
+  const [branchFilter, setBranchFilter] = useState('all');
+  const [branches, setBranches] = useState<Branch[]>([]);
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [error, setError] = useState('');
@@ -160,6 +165,12 @@ export default function PedidosPage() {
   const [clientPickerOpen, setClientPickerOpen] = useState(false);
   // Tarifação (spec § 3.13)
   const [newOrderWeight, setNewOrderWeight] = useState('');
+  // Dimensões e distância (§ 3.13). Vazias por omissão: a encomenda simples
+  // continua a orçar-se com peso e zona, sem seis campos por preencher.
+  const [newOrderC, setNewOrderC] = useState('');
+  const [newOrderL, setNewOrderL] = useState('');
+  const [newOrderA, setNewOrderA] = useState('');
+  const [newOrderKm, setNewOrderKm] = useState('');
   const [newOrderZone, setNewOrderZone] = useState('');
   const [newOrderService, setNewOrderService] = useState<ServiceLevel>('normal');
   const [pricingZones, setPricingZones] = useState<PricingZone[]>([]);
@@ -181,7 +192,18 @@ export default function PedidosPage() {
   // Details/Timeline Modal State
   const [selectedPedido, setSelectedPedido] = useState<Pedido | null>(null);
   const [invoiceBusy, setInvoiceBusy] = useState(false);
+  // Reagendamento e devolução (§ 3.37) — só aparecem num pedido falhado.
+  const [reagendarData, setReagendarData] = useState('');
+  const [devolucaoMotivo, setDevolucaoMotivo] = useState<ReturnReason>('ATTEMPTS_EXHAUSTED');
+  const [devolucaoRecebidoPor, setDevolucaoRecebidoPor] = useState('');
+  const [redeliveryBusy, setRedeliveryBusy] = useState(false);
+  const [redeliveryErro, setRedeliveryErro] = useState('');
   const [invoiceMsg, setInvoiceMsg] = useState('');
+  // Imagens do comprovativo: fora da listagem por peso (spec § 3.28), buscadas
+  // quando o detalhe abre.
+  const [podImages, setPodImages] = useState<PodImages | null>(null);
+  const [podLoading, setPodLoading] = useState(false);
+  const [podError, setPodError] = useState('');
 
   // Warehouse Shipment Modal State (spec § 8.2)
   const [warehousePedido, setWarehousePedido] = useState<Pedido | null>(null);
@@ -217,13 +239,14 @@ export default function PedidosPage() {
       setLoading(true);
       setError('');
       const [ordersPage, driversData] = await Promise.all([
-        adminApi.getPedidosPage({
+        adminApi.getOrdersPage({
           page: currentPage,
           pageSize,
           status: statusFilter === 'all' ? undefined : statusFilter,
+          branch_id: branchFilter === 'all' ? undefined : branchFilter,
           search: searchTerm.trim() || undefined,
         }),
-        adminApi.getMotoristas(),
+        adminApi.getDrivers(),
       ]);
       setPedidos(ordersPage.items);
       setTotalPedidos(ordersPage.total);
@@ -234,6 +257,9 @@ export default function PedidosPage() {
       } catch {
         setWarehouses([]);
       }
+      // Falha em silêncio: sem filiais o ecrã fica exatamente como estava, e a
+      // lista de encomendas não depende disto para funcionar.
+      adminApi.getFiliais().then((r) => setBranches(r.branches)).catch(() => setBranches([]));
     } catch (err) {
       setError('Erro ao carregar dados do servidor. Exibindo dados locais de contingência.');
       setPedidos([
@@ -257,13 +283,13 @@ export default function PedidosPage() {
     const timer = setTimeout(() => { void loadData(); }, searchTerm ? 300 : 0);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentPage, pageSize, statusFilter, searchTerm]);
+  }, [currentPage, pageSize, statusFilter, branchFilter, searchTerm]);
   // Procura a encomenda do código lido diretamente no servidor.
   useEffect(() => {
     const code = receiveTracking.trim().toUpperCase();
     if (!code) { setReceivePedido(null); return undefined; }
     const timer = setTimeout(() => {
-      adminApi.getPedidosPage({ search: code, pageSize: 5 })
+      adminApi.getOrdersPage({ search: code, pageSize: 5 })
         .then((r) => setReceivePedido(r.items.find((o) => o.trackingCode.toUpperCase() === code) ?? null))
         .catch(() => setReceivePedido(null));
     }, 300);
@@ -285,8 +311,8 @@ export default function PedidosPage() {
   const paginatedPedidos = pedidos;
 
   // A encomenda a receber é procurada NO SERVIDOR: com a listagem paginada, o
-  // código lido pode não estar na página aberta (spec § 3.1).
-  const normalizedReceiveCode = receiveTracking.trim().toUpperCase();
+  // código lido pode não estar na página aberta (spec § 3.1). A normalização do
+  // código vive no efeito que faz a procura, não aqui.
   const canReceivePedido = receivePedido?.status === 'in_transit';
   const availableWarehouses = warehouses.filter((warehouse) => warehouse.status === 'active' && !warehouse.full);
   const receiveWarehouse = warehouses.find((warehouse) => warehouse.id === receiveWarehouseId) ?? null;
@@ -326,6 +352,29 @@ export default function PedidosPage() {
     setClientPickerOpen(false);
   };
 
+  /**
+   * Comprovativo: só se carrega o que se vai mostrar (spec § 3.28).
+   *
+   * A listagem devolve `has_signature`/`has_photo` e nada de imagens; quando o
+   * detalhe abre e há prova, vamos buscá-la. Sem isto, cada página de 25 pedidos
+   * trazia as assinaturas e fotos de todas as entregas para desenhar uma tabela
+   * que nem imagens tem.
+   */
+  useEffect(() => {
+    const pod = selectedPedido?.pod;
+    if (!selectedPedido || !pod || (!pod.has_signature && !pod.has_photo)) {
+      setPodImages(null); setPodError('');
+      return;
+    }
+    let cancelled = false;
+    setPodLoading(true); setPodError(''); setPodImages(null);
+    adminApi.getOrderPod(selectedPedido.id)
+      .then((images) => { if (!cancelled) setPodImages(images); })
+      .catch(() => { if (!cancelled) setPodError('Não foi possível carregar o comprovativo.'); })
+      .finally(() => { if (!cancelled) setPodLoading(false); });
+    return () => { cancelled = true; };
+  }, [selectedPedido]);
+
   // Carrega as zonas de tarifação ao abrir o modal de criação (spec § 3.13).
   useEffect(() => {
     if (!isModalOpen || pricingZones.length > 0) return;
@@ -333,6 +382,23 @@ export default function PedidosPage() {
       .then((zs) => { setPricingZones(zs); if (zs.length && !newOrderZone) setNewOrderZone(zs[0].code); })
       .catch(() => setPricingZones([]));
   }, [isModalOpen, pricingZones.length, newOrderZone]);
+
+  /** Corre uma ação de reagendamento/devolução e recarrega o pedido. */
+  const acaoRedelivery = async (fn: () => Promise<unknown>) => {
+    setRedeliveryBusy(true);
+    setRedeliveryErro('');
+    try {
+      await fn();
+      setSelectedPedido(null);
+      await loadData();
+    } catch (e) {
+      // A mensagem do servidor é a útil: diz quantas tentativas restam ou
+      // porque é que a data foi recusada.
+      setRedeliveryErro(e instanceof Error ? e.message : 'A operação falhou.');
+    } finally {
+      setRedeliveryBusy(false);
+    }
+  };
 
   const calcularOrcamento = async () => {
     if (!newOrderZone) return;
@@ -343,6 +409,14 @@ export default function PedidosPage() {
         weight_grams: Math.round((parseFloat(newOrderWeight) || 0) * 1000),
         service: newOrderService,
         cod_amount: parseInt(newOrderCod, 10) || 0,
+        // Só com os três lados: com dois não há volume que calcular.
+        dimensions_cm: (parseFloat(newOrderC) > 0 && parseFloat(newOrderL) > 0 && parseFloat(newOrderA) > 0)
+          ? { length_cm: parseFloat(newOrderC), width_cm: parseFloat(newOrderL), height_cm: parseFloat(newOrderA) }
+          : undefined,
+        distance_km: parseFloat(newOrderKm) > 0 ? parseFloat(newOrderKm) : undefined,
+        // Com cliente registado, o contrato em vigor entra sozinho no preço
+        // (§ 3.35) — é o que evita ter de lembrar o desconto acordado.
+        client_ref_id: newOrderClientRefId,
       });
       setNewOrderQuote(q);
       setNewOrderValor(String(q.total_cents));
@@ -389,7 +463,7 @@ export default function PedidosPage() {
     setModalError('');
 
     try {
-      await adminApi.createPedido({
+      await adminApi.createOrder({
         trackingCode: newOrderTracking,
         client: newOrderClient,
         destination: newOrderDestino,
@@ -877,6 +951,22 @@ export default function PedidosPage() {
             ]}
           />
 
+          {branches.length > 1 && (
+            <Select
+              aria-label="Filtrar por filial de origem"
+              containerClassName="md:w-52"
+              value={branchFilter}
+              onChange={(event) => {
+                setBranchFilter(event.target.value);
+                setCurrentPage(1);
+              }}
+              options={[
+                { value: 'all', label: 'Todas as filiais' },
+                ...branches.map((b) => ({ value: b.id, label: b.name })),
+              ]}
+            />
+          )}
+
           <Button
             variant="secondary"
             onClick={loadData}
@@ -1156,6 +1246,32 @@ export default function PedidosPage() {
                     </select>
                   </div>
                 </div>
+
+                {/* Dimensões e distância — opcionais. Uma caixa grande e leve
+                    paga pelo espaço que ocupa, não pelo peso (§ 3.13). */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  <div>
+                    <label className="block text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-1">Comp. (cm)</label>
+                    <input type="number" min="0" step="1" placeholder="—" className="input" value={newOrderC}
+                      onChange={(e: React.ChangeEvent<HTMLInputElement>) => { setNewOrderC(e.target.value); setNewOrderQuote(null); }} />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-1">Larg. (cm)</label>
+                    <input type="number" min="0" step="1" placeholder="—" className="input" value={newOrderL}
+                      onChange={(e: React.ChangeEvent<HTMLInputElement>) => { setNewOrderL(e.target.value); setNewOrderQuote(null); }} />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-1">Alt. (cm)</label>
+                    <input type="number" min="0" step="1" placeholder="—" className="input" value={newOrderA}
+                      onChange={(e: React.ChangeEvent<HTMLInputElement>) => { setNewOrderA(e.target.value); setNewOrderQuote(null); }} />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-1">Distância (km)</label>
+                    <input type="number" min="0" step="0.1" placeholder="—" className="input" value={newOrderKm}
+                      onChange={(e: React.ChangeEvent<HTMLInputElement>) => { setNewOrderKm(e.target.value); setNewOrderQuote(null); }} />
+                  </div>
+                </div>
+
                 <div className="flex items-center justify-between gap-3">
                   <button type="button" onClick={calcularOrcamento} disabled={!newOrderZone || quoting}
                     className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-brand-600 text-white hover:bg-brand-500 disabled:opacity-50 transition-colors">
@@ -1168,7 +1284,28 @@ export default function PedidosPage() {
                   )}
                 </div>
                 {newOrderQuote && (
-                  <p className="text-[10px] text-slate-500">Base {newOrderQuote.base_cents / 100} + peso {newOrderQuote.weight_cents / 100}{newOrderQuote.service_cents > 0 ? ` + serviço ${newOrderQuote.service_cents / 100}` : ''} MZN · preenche o valor abaixo.</p>
+                  <div className="flex flex-col gap-0.5">
+                    <p className="text-[10px] text-slate-500">
+                      Base {newOrderQuote.base_cents / 100} + peso {newOrderQuote.weight_cents / 100}
+                      {newOrderQuote.distance_cents > 0 ? ` + distância ${newOrderQuote.distance_cents / 100}` : ''}
+                      {newOrderQuote.service_cents > 0 ? ` + serviço ${newOrderQuote.service_cents / 100}` : ''} MZN · preenche o valor abaixo.
+                    </p>
+                    {/* Os dois pesos: sem eles, a fatura de uma caixa leve e
+                        volumosa não tem como se explicar ao cliente. */}
+                    {newOrderQuote.charged_by_volume && (
+                      <p className="text-[10px] text-amber-400">
+                        Cobrado por volume: real {(newOrderQuote.weight_grams / 1000).toFixed(1)} kg ·
+                        volumétrico {(newOrderQuote.volumetric_grams / 1000).toFixed(1)} kg.
+                      </p>
+                    )}
+                    {newOrderQuote.contract_code && (
+                      <p className="text-[10px] text-brand-300">
+                        Contrato {newOrderQuote.contract_code}
+                        {(newOrderQuote.contract_discount_cents ?? 0) > 0 ? ` · desconto ${(newOrderQuote.contract_discount_cents ?? 0) / 100} MZN` : ''}
+                        {newOrderQuote.negotiated_zone_rate ? ' · tarifa negociada' : ''}
+                      </p>
+                    )}
+                  </div>
                 )}
               </div>
 
@@ -1310,6 +1447,97 @@ export default function PedidosPage() {
               </div>
             </div>
 
+            {/* Reagendar ou devolver (§ 3.37). Só num pedido falhado: é a única
+                situação em que estas duas saídas fazem sentido. */}
+            {selectedPedido.status === 'failed' && (
+              <div className="rounded-xl border border-amber-500/20 bg-amber-500/[0.04] p-4 flex flex-col gap-3">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <h4 className="text-xs font-bold uppercase tracking-wider text-amber-300">Entrega falhada</h4>
+                  <span className="text-[11px] text-slate-400">
+                    {selectedPedido.deliveryAttempts ?? 0} tentativa(s)
+                  </span>
+                </div>
+
+                {redeliveryErro && <p role="alert" className="text-xs text-red-400">{redeliveryErro}</p>}
+
+                <div className="flex flex-col sm:flex-row gap-2 sm:items-end">
+                  <div className="flex-1">
+                    <label className="block text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-1">
+                      Nova tentativa
+                    </label>
+                    <input type="date" className="input text-xs" value={reagendarData}
+                      min={new Date().toISOString().slice(0, 10)}
+                      onChange={(e: React.ChangeEvent<HTMLInputElement>) => setReagendarData(e.target.value)} />
+                  </div>
+                  <button type="button" disabled={!reagendarData || redeliveryBusy}
+                    onClick={() => acaoRedelivery(() => adminApi.rescheduleDelivery(selectedPedido.id, reagendarData))}
+                    className="text-xs font-semibold px-3 py-2 rounded-lg bg-brand-600 text-white hover:bg-brand-500 disabled:opacity-50 transition-colors">
+                    Reagendar
+                  </button>
+                </div>
+
+                <div className="flex flex-col sm:flex-row gap-2 sm:items-end border-t border-white/[0.06] pt-3">
+                  <div className="flex-1">
+                    <label className="block text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-1">
+                      Devolver ao remetente
+                    </label>
+                    <select className="input text-xs" value={devolucaoMotivo}
+                      onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setDevolucaoMotivo(e.target.value as ReturnReason)}>
+                      {(Object.keys(RETURN_REASON_LABELS) as ReturnReason[]).map((r) => (
+                        <option key={r} value={r}>{RETURN_REASON_LABELS[r]}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <button type="button" disabled={redeliveryBusy}
+                    onClick={() => acaoRedelivery(() => adminApi.iniciarDevolucao(selectedPedido.id, devolucaoMotivo))}
+                    className="text-xs font-semibold px-3 py-2 rounded-lg bg-surface-elevated text-slate-200 border border-white/10 hover:bg-surface-overlay disabled:opacity-50 transition-colors">
+                    Iniciar devolução
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Devolução em curso: falta confirmar quem a recebeu de volta. */}
+            {selectedPedido.returnInfo && !selectedPedido.returnInfo.received_at && (
+              <div className="rounded-xl border border-amber-500/20 bg-amber-500/[0.04] p-4 flex flex-col gap-2">
+                <h4 className="text-xs font-bold uppercase tracking-wider text-amber-300">Devolução em curso</h4>
+                <p className="text-[11px] text-slate-400">
+                  Motivo: {RETURN_REASON_LABELS[selectedPedido.returnInfo.reason]}. A encomenda está a caminho do remetente.
+                </p>
+                {redeliveryErro && <p role="alert" className="text-xs text-red-400">{redeliveryErro}</p>}
+                <div className="flex flex-col sm:flex-row gap-2 sm:items-end">
+                  <div className="flex-1">
+                    <label className="block text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-1">
+                      Quem recebeu de volta
+                    </label>
+                    <input className="input text-xs" placeholder="Nome de quem recebeu" value={devolucaoRecebidoPor}
+                      onChange={(e: React.ChangeEvent<HTMLInputElement>) => setDevolucaoRecebidoPor(e.target.value)} />
+                  </div>
+                  <button type="button" disabled={!devolucaoRecebidoPor.trim() || redeliveryBusy}
+                    onClick={() => acaoRedelivery(() => adminApi.confirmarDevolucao(selectedPedido.id, devolucaoRecebidoPor.trim()))}
+                    className="text-xs font-semibold px-3 py-2 rounded-lg bg-brand-600 text-white hover:bg-brand-500 disabled:opacity-50 transition-colors">
+                    Confirmar devolução
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Devolvida: o registo do que aconteceu, incluindo a fatura por decidir. */}
+            {selectedPedido.returnInfo?.received_at && (
+              <div className="rounded-xl border border-white/10 bg-surface-elevated p-4 flex flex-col gap-1">
+                <h4 className="text-xs font-bold uppercase tracking-wider text-slate-300">Devolvida ao remetente</h4>
+                <p className="text-[11px] text-slate-400">
+                  {RETURN_REASON_LABELS[selectedPedido.returnInfo.reason]} · recebida por {selectedPedido.returnInfo.received_by}
+                </p>
+                {selectedPedido.returnInfo.invoice_alert && (
+                  <p className="text-[11px] text-amber-300 mt-1">
+                    Fatura {selectedPedido.returnInfo.invoice_alert.number} continua ativa —
+                    emitir nota de crédito se a política da empresa o exigir.
+                  </p>
+                )}
+              </div>
+            )}
+
             {/* Comprovativo de entrega (POD) */}
             {selectedPedido.pod && (
               <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/[0.04] p-4">
@@ -1329,18 +1557,24 @@ export default function PedidosPage() {
                     <span className="font-semibold text-slate-200 mt-1 block">{trackingDate(selectedPedido.pod.captured_at).date} {trackingDate(selectedPedido.pod.captured_at).time}</span>
                   </div>
                 </div>
-                {(selectedPedido.pod.signature || selectedPedido.pod.photo) && (
+                {/* As imagens não vêm na listagem (spec § 3.28) — chegam por getOrderPod
+                    quando este modal abre, para o ecrã de pedidos não arrastar megabytes. */}
+                {(selectedPedido.pod.has_signature || selectedPedido.pod.has_photo) && (
                   <div className="flex gap-4 mt-3">
-                    {selectedPedido.pod.signature && (
+                    {podLoading && <span className="text-[11px] text-slate-500 self-center">A carregar comprovativo...</span>}
+                    {podError && <span role="alert" className="text-[11px] text-red-400 self-center">{podError}</span>}
+                    {podImages?.signature && (
                       <div>
                         <span className="block text-[10px] text-slate-500 mb-1">Assinatura</span>
-                        <img src={selectedPedido.pod.signature} alt="Assinatura do destinatário" className="h-16 rounded-lg bg-surface border border-white/10" />
+                        {/* eslint-disable-next-line @next/next/no-img-element -- A imagem é um data: URL vindo do POD — next/image não otimiza data URLs. */}
+                        <img src={podImages.signature} alt="Assinatura do destinatário" className="h-16 rounded-lg bg-surface border border-white/10" />
                       </div>
                     )}
-                    {selectedPedido.pod.photo && (
+                    {podImages?.photo && (
                       <div>
                         <span className="block text-[10px] text-slate-500 mb-1">Foto</span>
-                        <img src={selectedPedido.pod.photo} alt="Foto da entrega" className="h-16 w-16 rounded-lg object-cover border border-white/10" />
+                        {/* eslint-disable-next-line @next/next/no-img-element -- A imagem é um data: URL vindo do POD — next/image não otimiza data URLs. */}
+                        <img src={podImages.photo} alt="Foto da entrega" className="h-16 w-16 rounded-lg object-cover border border-white/10" />
                       </div>
                     )}
                   </div>
@@ -1692,6 +1926,7 @@ export default function PedidosPage() {
                     />
                     {podPhoto && (
                       <div className="mt-2 flex items-center gap-2">
+                        {/* eslint-disable-next-line @next/next/no-img-element -- A imagem é um data: URL vindo do POD — next/image não otimiza data URLs. */}
                         <img src={podPhoto} alt="Pré-visualização da foto" className="h-14 w-14 rounded-lg object-cover border border-white/10" />
                         <button type="button" onClick={() => setPodPhoto(null)} className="btn btn-ghost btn-sm">Remover</button>
                       </div>

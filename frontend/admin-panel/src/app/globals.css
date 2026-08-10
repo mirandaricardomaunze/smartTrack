@@ -1,4 +1,38 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+/* Leaflet: folha de estilo do pacote npm, não do unpkg.com. Sem isto o mapa
+ * desenha as tiles empilhadas e os controlos fora do sítio quando o cliente
+ * está atrás de uma firewall que bloqueia CDNs.
+ * Tem de ser a PRIMEIRA regra do ficheiro: o postcss-import só resolve @import
+ * antes de qualquer outra declaração. */
+@import 'leaflet/dist/leaflet.css';
+
+/* ─── Inter auto-hospedada (spec § 3.34 — build sem rede) ────────────────────────
+ * Os ficheiros vivem em public/fonts/ e são servidos pela própria aplicação.
+ *
+ * PORQUÊ NÃO `next/font/google` NEM `@import` de fonts.googleapis.com: o
+ * primeiro vai à rede durante `next build` — a compilação de produção passa a
+ * depender de acesso à internet e parte em CI ou num `docker build` sem saída
+ * para fora; o segundo vai à rede em cada visita, o que atrasa o primeiro
+ * desenho e entrega o IP de cada utilizador a um terceiro.
+ *
+ * Ficheiro vendorizado = build e execução funcionam offline. É o mesmo variable
+ * font (pesos 300–800 num só ficheiro), subconjuntos latin e latin-ext.
+ */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 300 800;
+  font-display: swap;
+  src: url('/fonts/inter-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 300 800;
+  font-display: swap;
+  src: url('/fonts/inter-latin-ext.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
 
 @tailwind base;
 @tailwind components;

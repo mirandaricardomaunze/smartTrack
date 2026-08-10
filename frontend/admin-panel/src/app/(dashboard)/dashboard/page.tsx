@@ -7,8 +7,8 @@
  * Spec ref: docs/spec/especificacao-tecnica-v1.md § 3.4 (Painel Administrativo)
  *
  * Fontes de dados (todas via api-gateway):
- *   GET /v1/orders         — lista de pedidos (adminApi.getPedidos)
- *   GET /v1/drivers        — frota (adminApi.getMotoristas)
+ *   GET /v1/orders         — lista de pedidos (adminApi.getOrders)
+ *   GET /v1/drivers        — frota (adminApi.getDrivers)
  *
  * Os agregados (KPIs, distribuição por status, receita) são derivados no cliente
  * a partir dessas duas listas — não há endpoint de agregação dedicado ainda.
@@ -19,9 +19,11 @@
  */
 
 import React, { useState, useEffect, useRef } from 'react';
-import { adminApi, Pedido, BackendDriver } from '@/services/api';
+import { adminApi, Pedido, BackendDriver, type OperationsSummary } from '@/services/api';
 import { usePreferences, densityClass } from '@/hooks/usePreferences';
 import { StatCard } from '@/components/ui';
+import FilaExcecoes from '@/components/FilaExcecoes';
+import RiscoOperacional from '@/components/RiscoOperacional';
 
 // ────────────────────────────────────────────────────────────────────────────
 // Vocabulário de status — espelha OrderStatus (backend/shared/types)
@@ -39,12 +41,6 @@ const STATUS_LABELS: Record<string, { label: string; badgeClass: string; barClas
   cancelled:            { label: 'Cancelado',          badgeClass: 'badge-neutral', barClass: 'bg-slate-600'   },
 };
 
-/** Status considerados "em curso" — nem finalizados nem cancelados. */
-const ACTIVE_STATUSES = [
-  'created', 'collected', 'in_transit',
-  'at_warehouse', 'awaiting_destination', 'out_for_delivery',
-];
-
 const FLEET_LABELS: Record<BackendDriver['current_status'], { label: string; badgeClass: string }> = {
   available: { label: 'Disponível', badgeClass: 'badge-success' },
   on_route:  { label: 'Em Rota',    badgeClass: 'badge-info'    },
@@ -55,36 +51,10 @@ const FLEET_LABELS: Record<BackendDriver['current_status'], { label: string; bad
 // Agregações derivadas
 // ────────────────────────────────────────────────────────────────────────────
 
-interface Kpis {
-  total:        number;
-  active:       number;
-  delivered:    number;
-  failed:       number;
-  revenueCents: number;
-  successRate:  number;
-}
-
-function computeKpis(pedidos: Pedido[]): Kpis {
-  const delivered = pedidos.filter((p) => p.status === 'delivered');
-  const failed    = pedidos.filter((p) => p.status === 'failed');
-  const active    = pedidos.filter((p) => ACTIVE_STATUSES.includes(p.status));
-
-  // Receita reconhecida = apenas pedidos entregues. Montantes em centavos (regra do projeto).
-  const revenueCents = delivered.reduce((sum, p) => sum + (p.value || 0), 0);
-
-  // Taxa de sucesso sobre pedidos finalizados — pendentes não contam no denominador.
-  const finalizados = delivered.length + failed.length;
-  const successRate = finalizados > 0 ? (delivered.length / finalizados) * 100 : 0;
-
-  return {
-    total:     pedidos.length,
-    active:    active.length,
-    delivered: delivered.length,
-    failed:    failed.length,
-    revenueCents,
-    successRate,
-  };
-}
+// `computeKpis` foi removida: contava sobre a página carregada e apresentava o
+// resultado como o retrato da operação. Os indicadores vêm agora de
+// `/v1/operations/summary`, contados em SQL sobre a empresa inteira (§ 3.39).
+// As agregações que ficam abaixo servem ilustrações de uma amostra e dizem-no.
 
 function computeStatusDistribution(pedidos: Pedido[]): { status: string; count: number; pct: number }[] {
   const counts = new Map<string, number>();
@@ -134,6 +104,7 @@ function StatSkeleton() {
 export default function DashboardPage() {
   const [pedidos, setPedidos]       = useState<Pedido[]>([]);
   const [motoristas, setMotoristas] = useState<BackendDriver[]>([]);
+  const [resumo, setResumo] = useState<OperationsSummary | null>(null);
   const [loading, setLoading]       = useState(true);
   const [error, setError]           = useState('');
   const [lastSync, setLastSync]     = useState('');
@@ -145,9 +116,13 @@ export default function DashboardPage() {
       setError('');
 
       // Independentes — não bloquear um pelo outro (mesmo padrão de useSidebarStats)
-      const [pedidosResult, motoristasResult] = await Promise.allSettled([
-        adminApi.getPedidos(),
-        adminApi.getMotoristas(),
+      const [pedidosResult, motoristasResult, resumoResult] = await Promise.allSettled([
+        adminApi.getOrders(),
+        adminApi.getDrivers(),
+        // Os indicadores vêm contados da base, sobre a empresa inteira (§ 3.39).
+        // As listas abaixo continuam a ser uma página — servem para MOSTRAR
+        // linhas recentes, não para contar.
+        adminApi.getOperationsSummary(),
       ]);
 
       if (pedidosResult.status === 'fulfilled') {
@@ -155,6 +130,9 @@ export default function DashboardPage() {
       }
       if (motoristasResult.status === 'fulfilled') {
         setMotoristas(motoristasResult.value);
+      }
+      if (resumoResult.status === 'fulfilled') {
+        setResumo(resumoResult.value);
       }
 
       if (pedidosResult.status === 'rejected' && motoristasResult.status === 'rejected') {
@@ -185,16 +163,13 @@ export default function DashboardPage() {
     return () => clearInterval(interval);
   }, [prefs.refreshIntervalSec]);
 
-  const kpis         = computeKpis(pedidos);
   const distribution = computeStatusDistribution(pedidos);
   const fleet        = computeFleet(motoristas);
 
-  // Pedidos mais recentes primeiro — updatedAt já vem formatado dd/mm/aaaa hh:mm
+  // Pedidos mais recentes primeiro — updatedAt já vem formatado dd/mm/aaaa hh:mm.
+  // É uma AMOSTRA para mostrar linhas, não uma base para contar: os números
+  // vivem em `resumo`, contados na base (§ 3.39).
   const recentes = [...pedidos].slice(0, 8);
-
-  const criticos = pedidos.filter(
-    (p) => p.status === 'failed' || p.status === 'awaiting_destination',
-  );
 
   return (
     <div className="flex flex-col gap-6">
@@ -234,22 +209,32 @@ export default function DashboardPage() {
           <>
             <StatCard
               label="Pedidos em Curso"
-              value={String(kpis.active)}
-              helper={<span className="text-xs text-slate-500">{kpis.total} pedidos no total</span>}
+              value={String(resumo?.orders.open ?? 0)}
+              helper={<span className="text-xs text-slate-500">{resumo?.orders.total ?? 0} pedidos no total</span>}
             />
             <StatCard
               label="Entregues"
-              value={String(kpis.delivered)}
-              helper={<span className={kpis.successRate >= 90 ? 'stat-delta-up' : 'stat-delta-down'}>Taxa de sucesso {kpis.successRate.toFixed(1)}%</span>}
+              value={String(resumo?.orders.delivered ?? 0)}
+              helper={
+                // `null` quando nada terminou ainda — mostrar 0% daria a
+                // impressão de que tudo falhou.
+                resumo?.orders.success_rate_pct == null
+                  ? <span className="text-xs text-slate-500">Ainda sem entregas concluídas</span>
+                  : <span className={resumo.orders.success_rate_pct >= 90 ? 'stat-delta-up' : 'stat-delta-down'}>
+                      Taxa de sucesso {resumo.orders.success_rate_pct.toFixed(1)}%
+                    </span>
+              }
             />
             <StatCard
               label="Insucessos"
-              value={String(kpis.failed)}
-              helper={<span className={kpis.failed > 0 ? 'stat-delta-down' : 'stat-delta-up'}>{kpis.failed > 0 ? 'Requer intervenção do suporte' : 'Nenhuma ocorrência'}</span>}
+              value={String((resumo?.orders.failed ?? 0) + (resumo?.orders.returned ?? 0))}
+              helper={<span className="text-xs text-slate-500">
+                {resumo?.orders.failed ?? 0} por resolver · {resumo?.orders.returned ?? 0} devolvida(s)
+              </span>}
             />
             <StatCard
               label="Receita Reconhecida"
-              value={formatCurrency(kpis.revenueCents)}
+              value={formatCurrency(resumo?.orders.revenue_cents ?? 0)}
               helper={<span className="text-xs text-slate-500">Apenas pedidos entregues</span>}
             />
           </>
@@ -261,7 +246,13 @@ export default function DashboardPage() {
         <div className="card lg:col-span-2 flex flex-col gap-4">
           <div>
             <h3 className="text-base font-semibold text-slate-100">Distribuição por Status</h3>
-            <p className="text-xs text-slate-500 mt-1">Repartição dos {kpis.total} pedidos registados</p>
+            {/* Diz explicitamente que é uma amostra: a repartição desenhada é a
+                da página carregada, e o total real vem do servidor. Apresentá-la
+                como o retrato completo foi o defeito que a § 3.39 corrigiu. */}
+            <p className="text-xs text-slate-500 mt-1">
+              Repartição dos {pedidos.length} pedidos mais recentes
+              {resumo && resumo.orders.total > pedidos.length && ` (de ${resumo.orders.total} no total)`}
+            </p>
           </div>
 
           {loading ? (
@@ -334,44 +325,14 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* ── Ocorrências que exigem atenção ── */}
-      {!loading && criticos.length > 0 && (
-        <div className="card border-red-500/20 flex flex-col gap-4">
-          <div className="flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-red-400 animate-pulse" />
-            <h3 className="text-base font-semibold text-slate-100">Requer Atenção</h3>
-            <span className="badge badge-error">{criticos.length}</span>
-          </div>
+      {/* ── À espera de uma decisão (§ 3.39) ──
+          Substitui a lista antiga, que só via a primeira página de encomendas e
+          só conhecia dois estados. A ordem e o conteúdo vêm do servidor. */}
+      {/* O que ainda dá para salvar vem ANTES do que já falhou (§ 3.47): uma
+          lista de trabalho por fazer no fim da página é uma lista que não se lê. */}
+      <RiscoOperacional />
 
-          <div className="table-wrapper">
-            <table className={`data-table ${densityClass(prefs.density)}`}>
-              <thead>
-                <tr>
-                  <th>Rastreio</th>
-                  <th>Cliente</th>
-                  <th>Destino</th>
-                  <th>Status</th>
-                  <th>Atualizado</th>
-                </tr>
-              </thead>
-              <tbody>
-                {criticos.map((p) => {
-                  const meta = STATUS_LABELS[p.status] ?? { label: p.status, badgeClass: 'badge-neutral' };
-                  return (
-                    <tr key={p.id}>
-                      <td className="font-mono text-xs text-slate-200">{p.trackingCode}</td>
-                      <td className="text-slate-300">{p.client}</td>
-                      <td>{p.destination}</td>
-                      <td><span className={`badge ${meta.badgeClass}`}>{meta.label}</span></td>
-                      <td className="text-xs">{p.updatedAt}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
+      <FilaExcecoes refreshMs={prefs.refreshIntervalSec * 1000} />
 
       {/* ── Movimentação recente ── */}
       <div className="flex flex-col gap-4">

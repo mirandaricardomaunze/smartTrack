@@ -83,6 +83,11 @@ Caminhos das skills:
 
 ### PASSO 3 — Contrato de API
 
+- [ ] Identificadores técnicos novos estão em inglês conforme `docs/spec/code-language-policy.md`?
+- [ ] Textos visíveis ao utilizador continuam em português?
+- [ ] Uma renomeação de contrato usa expand/contract e mantém compatibilidade?
+- [ ] Testes de nomenclatura reutilizam `CodeLanguagePolicy`/`NamingPolicyFactory` do harness?
+
 - [ ] Mudança de campo em DTO → atualizar `docs/openapi/` correspondente
 - [ ] Novo evento Kafka/SQS → registrar schema em `docs/events/schemas/`
 - [ ] Breaking change → incrementar versão da API (`/v2/`)

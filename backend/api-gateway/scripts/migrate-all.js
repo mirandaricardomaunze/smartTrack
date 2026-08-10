@@ -20,7 +20,18 @@ const moduleMigrations = [
   ['perfil da empresa', 'api-gateway/src/infrastructure/migrate-branding.js'],
   ['registo de auditoria', 'api-gateway/src/infrastructure/migrate-audit.js'],
   ['recuperação de senha', 'api-gateway/src/infrastructure/migrate-password-reset.js'],
+  ['estado de acesso das contas', 'api-gateway/src/infrastructure/migrate-user-access.js'],
   ['índices da listagem de pedidos', 'api-gateway/src/infrastructure/migrate-orders-index.js'],
+  ['registo central de erros', 'api-gateway/src/infrastructure/migrate-monitoring.js'],
+  // Ambas acrescentam colunas a tabelas do núcleo, por isso correm depois dele.
+  ['tarifação por volume e distância', 'api-gateway/src/infrastructure/migrate-pricing-dimensions.js'],
+  ['contratos de cliente', 'api-gateway/src/infrastructure/migrate-contracts.js'],
+  ['SLA e ocorrências', 'api-gateway/src/infrastructure/migrate-sla-incidents.js'],
+  ['transferências e contagens de armazém', 'api-gateway/src/infrastructure/migrate-warehouse-inventory.js'],
+  ['reagendamento e devolução', 'api-gateway/src/infrastructure/migrate-redelivery.js'],
+  // Tem de correr depois de a tabela `orders` existir: lê o POD de lá e move as
+  // imagens para `order_pod_images`.
+  ['imagens do comprovativo de entrega', 'api-gateway/src/infrastructure/migrate-pod-images.js'],
   // Recursos Humanos, finanças e frota. A ordem importa: `hr` cria as tabelas
   // base e `hr-portal` altera `hr_employees`. Sem estas entradas, um deploy novo
   // ficava sem 14 tabelas e as respetivas páginas respondiam 500.
@@ -33,8 +44,13 @@ const moduleMigrations = [
   ['RH — horário/turno do colaborador', 'api-gateway/src/infrastructure/migrate-hr-schedule.js'],
   ['finanças', 'api-gateway/scripts/migrate-finance.js'],
   ['frota', 'api-gateway/scripts/migrate-fleet.js'],
+  // Depois da frota: acrescenta `branch_id` a `fleet_vehicles`, que só existe
+  // a partir daí.
+  ['âmbito de filial', 'api-gateway/src/infrastructure/migrate-branches.js'],
   ['sincronização', 'orders-service/src/infrastructure/migrate.js'],
   ['rotas', 'routes-service/src/infrastructure/migrate.js'],
+  // Depois de `rotas` e de `drivers`: o backfill da empresa vem do motorista.
+  ['rotas — isolamento por empresa', 'api-gateway/src/infrastructure/migrate-routes-tenant.js'],
   ['pagamentos', 'payments-service/src/infrastructure/migrate.js'],
   ['notificações', 'notifications-service/src/infrastructure/migrate.js'],
   ['rastreio', 'tracking-intl-service/src/infrastructure/migrate.js'],

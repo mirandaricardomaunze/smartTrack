@@ -7,7 +7,8 @@
 
 export type DriverStatus = 'DISPONIVEL' | 'EM_ROTA' | 'OFFLINE';
 
-export type VehicleType = 'MOTO' | 'CARRO' | 'VAN' | 'CAMINHAO';
+/** Modais de entrega (§ 3.33) — MOTO e MOTOTRICICLO são a última milha. */
+export type VehicleType = 'MOTO' | 'MOTOTRICICLO' | 'CARRO' | 'VAN' | 'CAMINHAO';
 
 export interface DriverGps {
   lat:       number;

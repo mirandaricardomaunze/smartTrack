@@ -5,6 +5,8 @@ import { useRouter } from 'next/navigation';
 import { Button, Card, Input, Select, Textarea } from '@/components/ui';
 import { getCachedOrders, updateCachedOrderStatus } from '@/lib/offline/db';
 import { queueFinalDelivery } from '@/lib/offline/sync';
+import { compressPodImage } from '@/lib/image';
+import { navigationUrl } from '@/lib/navigation';
 import { authenticatedDriverId, driverApi, formatAddress, type DriverOrder } from '@/services/api';
 
 const FAILURE_OPTIONS = [
@@ -14,12 +16,8 @@ const FAILURE_OPTIONS = [
   { value: 'OTHER', label: 'Outro motivo' },
 ];
 
-function readImage(file: File): Promise<string> {
-  if (file.size > 2_200_000) return Promise.reject(new Error('A imagem excede o limite de 2,2 MB.'));
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = () => reject(new Error('Não foi possível ler a imagem.')); reader.readAsDataURL(file);
-  });
-}
+// Nada de rejeitar a foto por ser grande: uma câmara de telemóvel produz 3-5 MB
+// e o motorista ficaria sem conseguir fechar a entrega. Reduz-se antes de enviar.
 
 export default function EntregaPage({ params }: { params: { id: string } }) {
   const router = useRouter();
@@ -35,12 +33,15 @@ export default function EntregaPage({ params }: { params: { id: string } }) {
   const [online, setOnline] = useState(true);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [processing, setProcessing] = useState(0);
   const [error, setError] = useState('');
 
   async function selectImage(file: File | undefined, apply: (value: string) => void) {
     if (!file) { apply(''); return; }
-    try { apply(await readImage(file)); setError(''); }
+    setProcessing((n) => n + 1);
+    try { apply(await compressPodImage(file)); setError(''); }
     catch (err) { apply(''); setError(err instanceof Error ? err.message : 'Imagem inválida.'); }
+    finally { setProcessing((n) => n - 1); }
   }
 
   useEffect(() => {
@@ -89,7 +90,8 @@ export default function EntregaPage({ params }: { params: { id: string } }) {
 
   return <div className="flex flex-col gap-5 py-2">
     <div className="flex items-center justify-between"><Button size="sm" variant="ghost" onClick={() => router.back()}>← Voltar</Button><span className={`badge ${online ? 'badge-success' : 'badge-info'}`}>{online ? 'Online' : 'Offline'}</span></div>
-    <Card className="flex flex-col gap-2"><span className="font-mono text-sm font-bold text-brand-400">{order.tracking_code}</span><h1 className="text-base font-bold text-slate-100">{order.client}</h1><p className="text-xs text-slate-400">{formatAddress(order.destination)}</p>{order.client_phone && <a className="text-xs font-semibold text-brand-400" href={`tel:${order.client_phone}`}>{order.client_phone}</a>}</Card>
+    <Card className="flex flex-col gap-2"><span className="font-mono text-sm font-bold text-brand-400">{order.tracking_code}</span><h1 className="text-base font-bold text-slate-100">{order.client}</h1><p className="text-xs text-slate-400">{formatAddress(order.destination)}</p>{order.client_phone && <a className="text-xs font-semibold text-brand-400" href={`tel:${order.client_phone}`}>{order.client_phone}</a>}
+      {navigationUrl(order.destination) && <a href={navigationUrl(order.destination) as string} target="_blank" rel="noopener noreferrer" className="btn btn-secondary btn-sm mt-1 min-h-10 text-center">Navegar até à morada</a>}</Card>
     {error && <p role="alert" className="rounded-xl border border-red-500/20 bg-red-500/10 p-3 text-xs text-red-400">{error}</p>}
     <form onSubmit={submit} className="flex flex-col gap-4">
       <div className="grid grid-cols-2 gap-2"><Button variant={mode === 'delivered' ? 'success' : 'secondary'} onClick={() => setMode('delivered')}>Entregue</Button><Button variant={mode === 'failed' ? 'danger' : 'secondary'} onClick={() => setMode('failed')}>Insucesso</Button></div>
@@ -101,8 +103,9 @@ export default function EntregaPage({ params }: { params: { id: string } }) {
         {order.cod_amount > 0 && <Select label="Método de cobrança" value={codMethod} onChange={(event) => setCodMethod(event.target.value)} options={[{ value: 'CASH', label: 'Numerário' }, { value: 'MPESA', label: 'M-Pesa' }, { value: 'EMOLA', label: 'e-Mola' }, { value: 'MKESH', label: 'mKesh' }]} />}
       </> : <Select label="Motivo do insucesso" value={reason} onChange={(event) => setReason(event.target.value)} options={FAILURE_OPTIONS} />}
       <Textarea label="Observações" rows={3} value={notes} onChange={(event) => setNotes(event.target.value)} />
+      {processing > 0 && <p role="status" className="rounded-xl border border-brand-500/20 bg-brand-500/10 p-3 text-xs text-brand-300">A preparar a imagem para envio...</p>}
       {!online && <p className="rounded-xl border border-amber-500/20 bg-amber-500/10 p-3 text-xs text-amber-300">O comprovativo será guardado neste dispositivo e enviado quando a ligação regressar.</p>}
-      <Button type="submit" fullWidth variant={mode === 'delivered' ? 'primary' : 'danger'} loading={submitting}>{mode === 'delivered' ? 'Confirmar entrega' : 'Registar insucesso'}</Button>
+      <Button type="submit" fullWidth variant={mode === 'delivered' ? 'primary' : 'danger'} loading={submitting} disabled={processing > 0}>{mode === 'delivered' ? 'Confirmar entrega' : 'Registar insucesso'}</Button>
     </form>
   </div>;
 }

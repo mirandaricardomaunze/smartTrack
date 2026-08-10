@@ -23,3 +23,13 @@
 	encode gzip
 	reverse_proxy client:3011
 }
+
+# ── App do motorista (PWA) ────────────────────────────────────────────────────
+# Domínio próprio e não um caminho debaixo do site do cliente: o service worker
+# de uma PWA só controla o âmbito onde é servido, e a instalação no telemóvel
+# fica presa à origem. Partilhar origem com o portal do cliente misturaria os
+# dois caches e os dois pedidos de instalação.
+{$DOMAIN_DRIVER} {
+	encode gzip
+	reverse_proxy driver:3012
+}

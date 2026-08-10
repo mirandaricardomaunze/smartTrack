@@ -1,9 +1,9 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { adminApi } from '@/services/api';
+import { adminApi, type PasswordRecoveryAvailability } from '@/services/api';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -11,6 +11,18 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
+  const [recovery, setRecovery] = useState<PasswordRecoveryAvailability | null>(null);
+
+  // Sem provedor de email configurado, o link de recuperação prometia um email
+  // que nunca era enviado (spec § 3.32). Vale mais indicar o caminho que existe:
+  // pedir ao administrador da empresa para reemitir a senha.
+  useEffect(() => {
+    adminApi.getPasswordRecovery()
+      .then(setRecovery)
+      // Falha a consultar não pode esconder o caminho de recuperação: em dúvida,
+      // mostra-se o link (é o comportamento anterior a esta verificação).
+      .catch(() => setRecovery({ available: true, channel: 'email', fallback: '' }));
+  }, []);
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -63,7 +75,11 @@ export default function LoginPage() {
         </form>
 
         <p className="text-center text-[11px] leading-relaxed text-slate-500">
-          <Link href="/recuperar-senha" className="text-brand-400 hover:text-brand-300 font-semibold">Esqueci-me da senha</Link>
+          {recovery?.available === false ? (
+            <span>Esqueceu-se da senha? {recovery.fallback}</span>
+          ) : (
+            <Link href="/recuperar-senha" className="text-brand-400 hover:text-brand-300 font-semibold">Esqueci-me da senha</Link>
+          )}
         </p>
 
         <p className="text-center text-[11px] leading-relaxed text-slate-500">

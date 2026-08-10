@@ -23,6 +23,8 @@ const OrderStatus = Object.freeze({
   DELIVERED:            'delivered',
   FAILED:               'failed',
   CANCELLED:            'cancelled',
+  // Devolvida ao remetente (spec § 3.37) — ver a nota no enum canónico.
+  RETURNED:             'returned',
 });
 
 /** @type {Record<string, string[]>} */
@@ -32,12 +34,17 @@ const VALID_TRANSITIONS = Object.freeze({
   [OrderStatus.IN_TRANSIT]:           [OrderStatus.AT_WAREHOUSE, OrderStatus.OUT_FOR_DELIVERY, OrderStatus.FAILED],
   // DELIVERED a partir do armazém = levantamento ao balcão (spec § 3.23):
   // o cliente vai buscar a encomenda e ela nunca chega a sair para entrega.
-  [OrderStatus.AT_WAREHOUSE]:         [OrderStatus.AWAITING_DESTINATION, OrderStatus.OUT_FOR_DELIVERY, OrderStatus.DELIVERED],
+  // IN_TRANSIT a partir do armazém = transferência entre filiais (spec § 3.36):
+  // a encomenda sai de uma unidade para outra da mesma empresa e, durante o
+  // percurso, não está em armazém nenhum.
+  [OrderStatus.AT_WAREHOUSE]:         [OrderStatus.AWAITING_DESTINATION, OrderStatus.OUT_FOR_DELIVERY, OrderStatus.DELIVERED, OrderStatus.IN_TRANSIT],
   [OrderStatus.AWAITING_DESTINATION]: [OrderStatus.OUT_FOR_DELIVERY, OrderStatus.DELIVERED, OrderStatus.CANCELLED],
   [OrderStatus.OUT_FOR_DELIVERY]:     [OrderStatus.DELIVERED, OrderStatus.FAILED],
   [OrderStatus.DELIVERED]:            [],
   [OrderStatus.FAILED]:               [OrderStatus.IN_TRANSIT, OrderStatus.CANCELLED],
   [OrderStatus.CANCELLED]:            [],
+  // Terminal, como DELIVERED: acabou, mas do outro lado (spec § 3.37).
+  [OrderStatus.RETURNED]:             [],
 });
 
 /**

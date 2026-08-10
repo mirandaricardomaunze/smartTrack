@@ -11,7 +11,28 @@
 'use strict';
 
 const pool = require('./db');
-const { readCompanyId, writeCompanyId } = require('./tenant-context');
+const { readCompanyId, writeCompanyId, readBranchScope } = require('./tenant-context');
+
+/**
+ * Âmbito de filial na consulta de pedidos (spec § 3.45).
+ *
+ * Em SQL e não em JavaScript: a lista é paginada (§ 3.1), e filtrar depois de
+ * paginar devolveria páginas com menos linhas do que o pedido e uma contagem que
+ * não bate certo com o que se vê.
+ *
+ * A encomenda entra pelo OU: a filial de ORIGEM ou o armazém onde está AGORA.
+ * Sem isso, uma transferência a caminho ficaria invisível à base que a recebe.
+ */
+function branchClause(params, alias = '') {
+  const branches = readBranchScope();
+  if (!branches) return '';
+
+  const p = alias ? `${alias}.` : '';
+  params.push(branches);
+  const i = params.length;
+  return ` AND (${p}branch_id = ANY($${i}) OR ${p}warehouse_id = ANY($${i})`
+    + ` OR (${p}branch_id IS NULL AND ${p}warehouse_id IS NULL))`;
+}
 
 // ─── Multiempresa (spec § 2.4) ────────────────────────────────────────────────
 // `readCompanyId()` devolve a empresa a filtrar (ou undefined = sem filtro:
@@ -59,6 +80,9 @@ function rowToOrder(row) {
     driver_id:       row.driver_id ?? undefined,
     route_id:        row.route_id ?? undefined,
     warehouse_id:    row.warehouse_id ?? undefined,
+    // Filial de ORIGEM (§ 3.45) — `null` explícito e não `undefined`: "não se
+    // sabe por onde entrou" é uma resposta, e some do JSON se for undefined.
+    branch_id:       row.branch_id ?? null,
     pod:             row.pod ?? undefined,
     delivery_otp:    row.delivery_otp ?? undefined,
     cod_amount:      row.cod_amount ?? 0,
@@ -67,6 +91,11 @@ function rowToOrder(row) {
     cod_settlement_id: row.cod_settlement_id ?? undefined,
     weight_grams:    row.weight_grams ?? undefined,
     pricing:         row.pricing ?? undefined,
+    // Reagendamento e devolução (§ 3.37). `?? 0` cobre a leitura de uma base
+    // onde a migração ainda não correu.
+    delivery_attempts: Number(row.delivery_attempts ?? 0),
+    next_attempt_on: dateOnly(row.next_attempt_on),
+    return_info:     row.return_info ?? undefined,
     value:           row.value,
     history:         row.history ?? [],
     created_at:      row.created_at instanceof Date
@@ -97,6 +126,80 @@ function rowToDriver(row) {
       ? row.created_at.toISOString()
       : row.created_at,
   };
+}
+
+// ─── POD: imagens fora da linha do pedido (spec § 3.28) ──────────────────────
+// A assinatura e a foto chegam a 2,2 MB cada. Guardadas em `orders.pod`, iam a
+// reboque de cada `SELECT *` — e todas as listagens fazem `SELECT *`. Ficam numa
+// tabela à parte, carregadas só quando alguém abre o detalhe da entrega.
+
+const POD_IMAGE_KEYS = ['signature', 'photo'];
+
+/**
+ * Separa o POD em metadados (ficam no pedido) e imagens (vão para a tabela própria).
+ *
+ * Quando o POD chega sem imagens — o caso de qualquer atualização de estado sobre
+ * um pedido já entregue — os sinalizadores existentes são preservados e as imagens
+ * guardadas não são tocadas. Sem isso, uma mudança de estado apagava a prova.
+ *
+ * @param {object | null | undefined} pod
+ * @returns {{ meta: object | null, images: { signature?: string, photo?: string } | null }}
+ */
+function splitPod(pod) {
+  if (!pod || typeof pod !== 'object') return { meta: null, images: null };
+
+  const meta = { ...pod };
+  const images = {};
+  for (const key of POD_IMAGE_KEYS) {
+    const value = meta[key];
+    delete meta[key];
+    if (typeof value === 'string' && value) images[key] = value;
+  }
+
+  meta.has_signature = images.signature ? true : Boolean(pod.has_signature);
+  meta.has_photo     = images.photo     ? true : Boolean(pod.has_photo);
+
+  return { meta, images: Object.keys(images).length ? images : null };
+}
+
+/**
+ * Grava as imagens do POD. Só é chamada quando há imagens novas — uma atualização
+ * de metadados não reescreve megabytes.
+ * @param {import('pg').PoolClient | import('pg').Pool} executor
+ */
+async function upsertPodImages(executor, orderId, images) {
+  await executor.query(`
+    INSERT INTO order_pod_images (order_id, signature, photo, updated_at)
+    VALUES ($1, $2, $3, NOW())
+    ON CONFLICT (order_id) DO UPDATE SET
+      signature  = COALESCE(EXCLUDED.signature, order_pod_images.signature),
+      photo      = COALESCE(EXCLUDED.photo,     order_pod_images.photo),
+      updated_at = NOW()
+  `, [orderId, images.signature ?? null, images.photo ?? null]);
+}
+
+/**
+ * Corre `fn` dentro de uma transação. Se já vier um executor de transação, usa-o
+ * — quem abriu a transação é que a fecha.
+ * @template T
+ * @param {import('pg').PoolClient | import('pg').Pool} executor
+ * @param {(executor: any) => Promise<T>} fn
+ * @returns {Promise<T>}
+ */
+async function inTransaction(executor, fn) {
+  if (executor !== pool) return fn(executor);
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await fn(client);
+    await client.query('COMMIT');
+    return result;
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 // ─── OrderRepository ─────────────────────────────────────────────────────────
@@ -137,6 +240,10 @@ const OrderRepository = {
     if (opts.status) { params.push(opts.status); clauses.push(`current_status = $${params.length}`); }
     if (opts.driver_id) { params.push(opts.driver_id); clauses.push(`driver_id = $${params.length}`); }
     if (opts.warehouse_id) { params.push(opts.warehouse_id); clauses.push(`warehouse_id = $${params.length}`); }
+    // Filial de ORIGEM (§ 3.45): responde a "o que entrou por esta base", que é
+    // outra pergunta — e outra resposta — do que `warehouse_id`, "o que está
+    // agora nela".
+    if (opts.branch_id) { params.push(opts.branch_id); clauses.push(`branch_id = $${params.length}`); }
     if (opts.cod_status) { params.push(opts.cod_status); clauses.push(`cod_status = $${params.length}`); }
     if (opts.from) { params.push(opts.from); clauses.push(`created_at >= $${params.length}`); }
     if (opts.to) { params.push(opts.to); clauses.push(`created_at < $${params.length}`); }
@@ -145,7 +252,12 @@ const OrderRepository = {
       const p = `$${params.length}`;
       clauses.push(`(lower(tracking_code) LIKE ${p} OR lower(client_id) LIKE ${p} OR lower(coalesce(destination->>'city','')) LIKE ${p})`);
     }
-    const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+    let where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+
+    // O âmbito de filial entra depois dos filtros do ecrã: é uma restrição, não
+    // uma escolha de quem consulta, e por isso não pode ser removida por eles.
+    const filial = branchClause(params);
+    if (filial) where = where ? `${where}${filial}` : `WHERE TRUE${filial}`;
 
     const total = Number((await pool.query(`SELECT COUNT(*) AS total FROM orders ${where}`, params)).rows[0].total);
     const limit = Math.min(Math.max(Number(opts.limit) || 25, 1), 200);
@@ -193,11 +305,68 @@ const OrderRepository = {
    */
   async findById(id, executor = pool) {
     const params = [id];
+    // O âmbito de filial também aqui: sem isto, bastaria escrever o id na barra
+    // de endereço para abrir — e alterar — uma encomenda de outra base. Uma
+    // lista filtrada com detalhe aberto não é uma lente, é uma ilusão.
     const { rows } = await executor.query(
-      `SELECT * FROM orders WHERE id = $1${companyClause(params)} LIMIT 1`,
+      `SELECT * FROM orders WHERE id = $1${companyClause(params)}${branchClause(params)} LIMIT 1`,
       params,
     );
     return rows.length ? rowToOrder(rows[0]) : undefined;
+  },
+
+  /**
+   * Vários pedidos por id, numa consulta só.
+   *
+   * O despacho (§ 3.33) precisa do peso de todas as paradas antes de montar a
+   * rota; uma rota de trinta paradas não pode custar trinta idas à base.
+   * Ids desconhecidos são simplesmente omitidos do resultado.
+   *
+   * @param {string[]} ids
+   * @returns {Promise<Map<string, object>>}
+   */
+  async findManyByIds(ids) {
+    const unique = [...new Set((ids ?? []).filter(Boolean))];
+    if (unique.length === 0) return new Map();
+
+    const params = [unique];
+    const { rows } = await pool.query(
+      `SELECT * FROM orders WHERE id = ANY($1::text[])${companyClause(params)}`,
+      params,
+    );
+    return new Map(rows.map((row) => [row.id, rowToOrder(row)]));
+  },
+
+  /**
+   * Liga um conjunto de pedidos ao motorista e à rota que os vai levar.
+   *
+   * PORQUÊ UMA ESCRITA PRÓPRIA e não `update()`: `update()` reescreve a linha
+   * inteira a partir de um objeto em memória. Aqui mexem-se dois campos em
+   * várias linhas ao mesmo tempo, e ler-modificar-gravar cada pedido abria uma
+   * janela para desfazer o que a app do motorista tivesse acabado de gravar.
+   *
+   * Só atualiza pedidos que ainda não estão fechados: uma rota reotimizada não
+   * pode reatribuir uma encomenda já entregue ou cancelada.
+   *
+   * @param {string[]} orderIds
+   * @param {{ driver_id: string, route_id: string }} assignment
+   * @returns {Promise<string[]>} Ids efetivamente atualizados.
+   */
+  async assignToRoute(orderIds, assignment) {
+    const unique = [...new Set((orderIds ?? []).filter(Boolean))];
+    if (unique.length === 0) return [];
+
+    const params = [assignment.driver_id, assignment.route_id, unique];
+    const { rows } = await pool.query(`
+      UPDATE orders
+         SET driver_id  = $1,
+             route_id   = $2,
+             updated_at = NOW()
+       WHERE id = ANY($3::text[])
+         AND current_status NOT IN ('delivered', 'cancelled')${companyClause(params)}
+      RETURNING id
+    `, params);
+    return rows.map((row) => row.id);
   },
 
   /**
@@ -259,43 +428,36 @@ const OrderRepository = {
    * @returns {Promise<object>}
    */
   async create(order) {
-    const { rows } = await pool.query(`
-      INSERT INTO orders (
-        id, client_id, client_phone, client_email, tracking_code, current_status,
-        origin, destination, carrier_intl_id, driver_id, route_id, warehouse_id,
-        pod, delivery_otp, cod_amount, cod_status, cod, cod_settlement_id,
-        value, history, created_at, updated_at, client_ref_id, weight_grams, pricing, company_id
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)
-      RETURNING *
-    `, [
-      order.id,
-      order.client_id,
-      order.client_phone ?? null,
-      order.client_email ?? null,
-      order.tracking_code,
-      order.current_status,
-      JSON.stringify(order.origin),
-      JSON.stringify(order.destination),
-      order.carrier_intl_id ?? null,
-      order.driver_id ?? null,
-      order.route_id ?? null,
-      order.warehouse_id ?? null,
-      order.pod ? JSON.stringify(order.pod) : null,
-      order.delivery_otp ? JSON.stringify(order.delivery_otp) : null,
-      order.cod_amount ?? 0,
-      order.cod_status ?? 'none',
-      order.cod ? JSON.stringify(order.cod) : null,
-      order.cod_settlement_id ?? null,
-      order.value,
-      JSON.stringify(order.history ?? []),
-      order.created_at,
-      order.updated_at,
-      order.client_ref_id ?? null,
-      order.weight_grams ?? null,
-      order.pricing ? JSON.stringify(order.pricing) : null,
-      order.company_id ?? writeCompanyId(),
-    ]);
-    return rowToOrder(rows[0]);
+    const { meta: podMeta, images: podImages } = splitPod(order.pod);
+    if (podImages) {
+      return inTransaction(pool, async (tx) => {
+        const created = await insertOrder(tx, order, podMeta);
+        await upsertPodImages(tx, order.id, podImages);
+        return created;
+      });
+    }
+    return insertOrder(pool, order, podMeta);
+  },
+
+  /**
+   * Imagens do comprovativo, carregadas à parte (spec § 3.28).
+   *
+   * NÃO faz controlo de acesso — quem chama tem de ter confirmado antes, por
+   * `findById` ou `findByCode`, que o pedido é visível a quem pergunta.
+   *
+   * @param {string} orderId
+   * @returns {Promise<{ signature?: string, photo?: string }>}
+   */
+  async findPodImages(orderId, executor = pool) {
+    const { rows } = await executor.query(
+      'SELECT signature, photo FROM order_pod_images WHERE order_id = $1 LIMIT 1',
+      [orderId],
+    );
+    if (!rows.length) return {};
+    return {
+      signature: rows[0].signature ?? undefined,
+      photo:     rows[0].photo ?? undefined,
+    };
   },
 
   /**
@@ -304,41 +466,150 @@ const OrderRepository = {
    * @returns {Promise<void>}
    */
   async update(order, executor = pool) {
-    const params = [
-      order.current_status,
-      order.driver_id ?? null,
-      order.route_id ?? null,
-      order.warehouse_id ?? null,
-      order.pod ? JSON.stringify(order.pod) : null,
-      order.delivery_otp ? JSON.stringify(order.delivery_otp) : null,
-      order.cod_amount ?? 0,
-      order.cod_status ?? 'none',
-      order.cod ? JSON.stringify(order.cod) : null,
-      order.cod_settlement_id ?? null,
-      JSON.stringify(order.destination ?? {}),
-      JSON.stringify(order.history ?? []),
-      order.updated_at,
-      order.id,
-    ];
-    await executor.query(`
-      UPDATE orders SET
-        current_status    = $1,
-        driver_id         = $2,
-        route_id          = $3,
-        warehouse_id      = $4,
-        pod               = $5,
-        delivery_otp      = $6,
-        cod_amount        = $7,
-        cod_status        = $8,
-        cod               = $9,
-        cod_settlement_id = $10,
-        destination       = $11,
-        history           = $12,
-        updated_at        = $13
-      WHERE id = $14${companyClause(params)}
-    `, params);
+    const { meta: podMeta, images: podImages } = splitPod(order.pod);
+    if (podImages) {
+      return inTransaction(executor, async (tx) => {
+        const gravado = await updateOrderRow(tx, order, podMeta);
+        await upsertPodImages(tx, order.id, podImages);
+        return gravado;
+      });
+    }
+    return updateOrderRow(executor, order, podMeta);
+  },
+
+  /**
+   * Guarda a prova visual de uma devolução ao remetente (§ 3.37).
+   *
+   * Partilha `order_pod_images` com o comprovativo de entrega, e sem conflito:
+   * uma encomenda devolvida nunca chegou a ser entregue, logo não tem POD de
+   * entrega para sobrepor. A alternativa — uma segunda tabela idêntica — daria
+   * dois sítios para procurar "as imagens desta encomenda".
+   *
+   * @param {string} orderId
+   * @param {{ signature?: string, photo?: string }} images
+   */
+  async saveReturnImages(orderId, images) {
+    if (!images?.signature && !images?.photo) return;
+    await upsertPodImages(pool, orderId, images);
   },
 };
+
+/**
+ * INSERT cru do pedido. Separado de `create` para o caminho com imagens poder
+ * reutilizá-lo dentro da transação.
+ * @param {import('pg').PoolClient | import('pg').Pool} executor
+ */
+async function insertOrder(executor, order, podMeta) {
+  const { rows } = await executor.query(`
+      INSERT INTO orders (
+        id, client_id, client_phone, client_email, tracking_code, current_status,
+        origin, destination, carrier_intl_id, driver_id, route_id, warehouse_id,
+        pod, delivery_otp, cod_amount, cod_status, cod, cod_settlement_id,
+        value, history, created_at, updated_at, client_ref_id, weight_grams, pricing, company_id,
+        delivery_attempts, next_attempt_on, return_info, branch_id
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30)
+      RETURNING *
+    `, [
+    order.id,
+    order.client_id,
+    order.client_phone ?? null,
+    order.client_email ?? null,
+    order.tracking_code,
+    order.current_status,
+    JSON.stringify(order.origin),
+    JSON.stringify(order.destination),
+    order.carrier_intl_id ?? null,
+    order.driver_id ?? null,
+    order.route_id ?? null,
+    order.warehouse_id ?? null,
+    podMeta ? JSON.stringify(podMeta) : null,
+    order.delivery_otp ? JSON.stringify(order.delivery_otp) : null,
+    order.cod_amount ?? 0,
+    order.cod_status ?? 'none',
+    order.cod ? JSON.stringify(order.cod) : null,
+    order.cod_settlement_id ?? null,
+    order.value,
+    JSON.stringify(order.history ?? []),
+    order.created_at,
+    order.updated_at,
+    order.client_ref_id ?? null,
+    order.weight_grams ?? null,
+    order.pricing ? JSON.stringify(order.pricing) : null,
+    order.company_id ?? writeCompanyId(),
+    order.delivery_attempts ?? 0,
+    order.next_attempt_on ?? null,
+    order.return_info ? JSON.stringify(order.return_info) : null,
+    // Filial de ORIGEM (spec § 3.45), fixada aqui e nunca mais alterada:
+    // `warehouse_id` continua a dizer onde a mercadoria está agora. Quem tem uma
+    // só filial atribuída regista por ela; quem vê a empresa toda não escolhe
+    // filial nenhuma, e a encomenda fica sem origem em vez de com uma inventada.
+    order.branch_id ?? defaultBranchId(),
+  ]);
+  return rowToOrder(rows[0]);
+}
+
+/**
+ * Filial a atribuir a um registo novo.
+ *
+ * SÓ QUANDO NÃO HÁ DÚVIDA: com duas ou mais filiais no âmbito, escolher a
+ * primeira atribuiria receita à base errada — e uma atribuição errada é pior do
+ * que nenhuma, porque tem o aspeto de um facto.
+ */
+function defaultBranchId() {
+  const branches = readBranchScope();
+  return branches && branches.length === 1 ? branches[0] : null;
+}
+
+/**
+ * UPDATE cru do pedido, já com o POD sem imagens.
+ * @param {import('pg').PoolClient | import('pg').Pool} executor
+ */
+async function updateOrderRow(executor, order, podMeta) {
+  const params = [
+    order.current_status,
+    order.driver_id ?? null,
+    order.route_id ?? null,
+    order.warehouse_id ?? null,
+    podMeta ? JSON.stringify(podMeta) : null,
+    order.delivery_otp ? JSON.stringify(order.delivery_otp) : null,
+    order.cod_amount ?? 0,
+    order.cod_status ?? 'none',
+    order.cod ? JSON.stringify(order.cod) : null,
+    order.cod_settlement_id ?? null,
+    JSON.stringify(order.destination ?? {}),
+    JSON.stringify(order.history ?? []),
+    order.updated_at,
+    order.delivery_attempts ?? 0,
+    order.next_attempt_on ?? null,
+    order.return_info ? JSON.stringify(order.return_info) : null,
+    order.id,
+  ];
+  const { rows } = await executor.query(`
+    UPDATE orders SET
+      current_status    = $1,
+      driver_id         = $2,
+      route_id          = $3,
+      warehouse_id      = $4,
+      pod               = $5,
+      delivery_otp      = $6,
+      cod_amount        = $7,
+      cod_status        = $8,
+      cod               = $9,
+      cod_settlement_id = $10,
+      destination       = $11,
+      history           = $12,
+      updated_at        = $13,
+      delivery_attempts = $14,
+      next_attempt_on   = $15,
+      return_info       = $16
+    WHERE id = $17${companyClause(params)}
+    RETURNING *
+  `, params);
+  // Devolve o pedido gravado, e não `undefined` como antes. Sem isto, cada
+  // chamador tinha de manter uma cópia em memória do que julgava ter escrito —
+  // e um `return OrderRepository.update(...)` devolvia silenciosamente nada.
+  return rows.length ? rowToOrder(rows[0]) : undefined;
+}
 
 // ─── UserRepository ──────────────────────────────────────────────────────────
 
@@ -354,10 +625,17 @@ function rowToUser(row) {
     email:      row.email,
     role:       row.role,
     company_id: row.company_id ?? undefined,
-    created_at: row.created_at instanceof Date
-      ? row.created_at.toISOString()
-      : row.created_at,
+    // Bases anteriores à § 3.32 podem devolver a coluna vazia numa leitura que
+    // não passou pelo `ensureTable` — uma conta sem estado é uma conta ativa.
+    status:     row.status ?? 'active',
+    blocked_at: toIso(row.blocked_at),
+    created_at: toIso(row.created_at),
   };
+}
+
+/** Data → ISO, tolerante a string e a nulo. */
+function toIso(value) {
+  return value instanceof Date ? value.toISOString() : (value ?? undefined);
 }
 
 const UserRepository = {
@@ -381,6 +659,12 @@ const UserRepository = {
     // utilizador vem daqui. SUPERADMIN tem company_id NULL (acesso à plataforma).
     await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS company_id TEXT;`);
     await pool.query(`ALTER TABLE users ALTER COLUMN company_id DROP NOT NULL;`);
+    // Estado de acesso (spec § 3.32). Repetido aqui, e não só na migração, para
+    // que uma base antiga ganhe a coluna no arranque — o login lê-a em todas as
+    // autenticações e uma coluna em falta seria um erro 500 na porta de entrada.
+    await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active';`);
+    await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS blocked_at TIMESTAMPTZ;`);
+    await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();`);
   },
 
   /**
@@ -408,6 +692,87 @@ const UserRepository = {
       RETURNING *
     `, [user.id, user.name, user.email, user.password_hash, user.role, user.company_id ?? null]);
     return rowToUser(rows[0]);
+  },
+
+  // ── Contas e acessos (spec § 3.32) ─────────────────────────────────────────
+  // Todas as leituras e escritas abaixo passam pelo filtro da empresa em
+  // contexto: um ADMIN da empresa A não vê nem mexe nas contas da empresa B.
+  // Sem empresa em contexto (SUPERADMIN, testes) não há filtro, como no resto.
+
+  /**
+   * Contas da empresa em contexto. Nunca devolve o hash da senha.
+   * @returns {Promise<object[]>}
+   */
+  async list() {
+    const params = [];
+    const { rows } = await pool.query(`
+      SELECT * FROM users${companyWhere(params)}
+      ORDER BY role, name
+    `, params);
+    return rows.map(rowToUser);
+  },
+
+  /**
+   * @param {string} id
+   * @returns {Promise<object | undefined>}
+   */
+  async findById(id) {
+    const params = [id];
+    const { rows } = await pool.query(
+      `SELECT * FROM users WHERE id = $1${companyClause(params)} LIMIT 1`,
+      params,
+    );
+    return rows.length ? rowToUser(rows[0]) : undefined;
+  },
+
+  /**
+   * Quais destes ids já têm conta. Serve a listagem de motoristas, para o painel
+   * saber a quem falta criar acesso sem uma consulta por linha.
+   * @param {string[]} ids
+   * @returns {Promise<Set<string>>}
+   */
+  async existingIds(ids) {
+    const unique = [...new Set((ids ?? []).filter(Boolean))];
+    if (unique.length === 0) return new Set();
+    const params = [unique];
+    const { rows } = await pool.query(
+      `SELECT id FROM users WHERE id = ANY($1)${companyClause(params)}`,
+      params,
+    );
+    return new Set(rows.map((row) => row.id));
+  },
+
+  /**
+   * Substitui a senha. Devolve a conta afetada, ou undefined se não existe (ou
+   * é de outra empresa).
+   * @param {string} id
+   * @param {string} passwordHash
+   * @returns {Promise<object | undefined>}
+   */
+  async updatePassword(id, passwordHash) {
+    const params = [passwordHash, id];
+    const { rows } = await pool.query(`
+      UPDATE users SET password_hash = $1, updated_at = NOW()
+      WHERE id = $2${companyClause(params)}
+      RETURNING *
+    `, params);
+    return rows.length ? rowToUser(rows[0]) : undefined;
+  },
+
+  /**
+   * Suspende ou reativa uma conta.
+   * @param {string} id
+   * @param {'active'|'blocked'} status
+   * @returns {Promise<object | undefined>}
+   */
+  async updateStatus(id, status) {
+    const params = [status, status === 'blocked' ? new Date() : null, id];
+    const { rows } = await pool.query(`
+      UPDATE users SET status = $1, blocked_at = $2, updated_at = NOW()
+      WHERE id = $3${companyClause(params)}
+      RETURNING *
+    `, params);
+    return rows.length ? rowToUser(rows[0]) : undefined;
   },
 };
 
@@ -515,6 +880,35 @@ const DriverRepository = {
       on_route:  Number(rows[0].on_route),
       available: Number(rows[0].available),
     };
+  },
+
+  /**
+   * Insere um motorista na empresa em contexto.
+   *
+   * PORQUE FALTAVA: o painel tinha um botão "Adicionar Motorista" que só
+   * escrevia no estado do React — o motorista desaparecia ao recarregar a
+   * página, e não havia endpoint nenhum para o criar (spec § 3.32).
+   *
+   * @param {object} driver
+   * @returns {Promise<object>}
+   */
+  async create(driver) {
+    const { rows } = await pool.query(`
+      INSERT INTO drivers (id, name, email, phone, vehicle, current_status, performance_metrics, gps, created_at, company_id)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW(),$9)
+      RETURNING *
+    `, [
+      driver.id,
+      driver.name,
+      driver.email ?? null,
+      driver.phone ?? null,
+      JSON.stringify(driver.vehicle ?? {}),
+      driver.current_status ?? 'offline',
+      JSON.stringify(driver.performance_metrics ?? {}),
+      null,
+      writeCompanyId(),
+    ]);
+    return rowToDriver(rows[0]);
   },
 
   /**
@@ -1006,6 +1400,26 @@ function isoOf(v) {
   return v instanceof Date ? v.toISOString() : v;
 }
 
+/**
+ * Converte uma coluna `DATE` para 'YYYY-MM-DD'.
+ *
+ * PORQUE NÃO `toISOString().slice(0, 10)`: o driver do Postgres devolve um
+ * `DATE` como um `Date` à MEIA-NOITE LOCAL. A leste de Greenwich, `toISOString`
+ * recua para o dia anterior — uma entrega combinada para dia 10 aparecia ao
+ * operador como dia 9. Ler as componentes locais é o que preserva o dia que foi
+ * escrito, e é isto que uma coluna sem hora significa.
+ *
+ * @param {Date|string|null|undefined} v
+ * @returns {string|undefined}
+ */
+function dateOnly(v) {
+  if (v == null) return undefined;
+  if (!(v instanceof Date)) return String(v).slice(0, 10);
+  const mes = String(v.getMonth() + 1).padStart(2, '0');
+  const dia = String(v.getDate()).padStart(2, '0');
+  return `${v.getFullYear()}-${mes}-${dia}`;
+}
+
 function rowToSupportThread(row) {
   return {
     id:                 row.id,
@@ -1304,6 +1718,10 @@ function rowToZone(row) {
     base_cents:   Number(row.base_cents),
     per_kg_cents: Number(row.per_kg_cents),
     included_kg:  Number(row.included_kg),
+    // Tarifação por distância (§ 3.13). `?? 0` cobre a leitura de uma base onde
+    // a migração ainda não correu — a zona simplesmente não cobra ao km.
+    per_km_cents: Number(row.per_km_cents ?? 0),
+    included_km:  Number(row.included_km ?? 0),
     active:       row.active,
     sort_order:   Number(row.sort_order),
     created_at:   isoOf(row.created_at),
@@ -1338,10 +1756,10 @@ const PricingRepository = {
 
   async createZone(z) {
     const { rows } = await pool.query(`
-      INSERT INTO pricing_zones (id, code, name, base_cents, per_kg_cents, included_kg, active, sort_order, company_id, created_at, updated_at)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW(),NOW())
+      INSERT INTO pricing_zones (id, code, name, base_cents, per_kg_cents, included_kg, per_km_cents, included_km, active, sort_order, company_id, created_at, updated_at)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW(),NOW())
       RETURNING *
-    `, [z.id, z.code, z.name, z.base_cents, z.per_kg_cents, z.included_kg, z.active ?? true, z.sort_order ?? 0, z.company_id ?? writeCompanyId()]);
+    `, [z.id, z.code, z.name, z.base_cents, z.per_kg_cents, z.included_kg, z.per_km_cents ?? 0, z.included_km ?? 0, z.active ?? true, z.sort_order ?? 0, z.company_id ?? writeCompanyId()]);
     return rowToZone(rows[0]);
   },
 
@@ -1353,6 +1771,8 @@ const PricingRepository = {
     if (patch.base_cents   !== undefined) col('base_cents', patch.base_cents);
     if (patch.per_kg_cents !== undefined) col('per_kg_cents', patch.per_kg_cents);
     if (patch.included_kg  !== undefined) col('included_kg', patch.included_kg);
+    if (patch.per_km_cents !== undefined) col('per_km_cents', patch.per_km_cents);
+    if (patch.included_km  !== undefined) col('included_km', patch.included_km);
     if (patch.active       !== undefined) col('active', patch.active);
     if (patch.sort_order   !== undefined) col('sort_order', patch.sort_order);
     if (sets.length === 0) return this.findZoneById(id);
@@ -1403,6 +1823,9 @@ function rowToInvoice(row) {
     hash_control:   row.hash_control ?? undefined,
     signed_at:      row.signed_at ? isoOf(row.signed_at) : undefined,
     issued_by:      row.issued_by ?? undefined,
+    // Vencimento acordado no contrato (§ 3.35). Ausente numa fatura-recibo de
+    // pronto pagamento — ver a nota em `dueDateFrom`.
+    due_date:       dateOnly(row.due_date),
     // Retificação (NC/ND)
     related_invoice_id: row.related_invoice_id ?? undefined,
     related_number: row.related_number ?? undefined,
@@ -1494,7 +1917,7 @@ const InvoiceRepository = {
           issuer_name, issuer_tax_id, items, tax_summary,
           subtotal_cents, tax_rate_pct, tax_cents, total_cents, currency, status, notes,
           hash, previous_hash, hash_control, signed_at, issued_by,
-          related_invoice_id, related_number,
+          related_invoice_id, related_number, due_date,
           company_id, issued_at, created_at, updated_at
         ) VALUES (
           $1,$2,$3,$4,$5,$6,$7,$8,
@@ -1502,8 +1925,8 @@ const InvoiceRepository = {
           $13,$14,$15,$16,
           $17,$18,$19,$20,$21,$22,$23,
           $24,$25,$26,$27,$28,
-          $29,$30,
-          $31,$32,NOW(),NOW()
+          $29,$30,$31,
+          $32,$33,NOW(),NOW()
         ) RETURNING *
       `, [
         doc.id, number, doc.doc_type, doc.series, seq, doc.order_id ?? null, doc.tracking_code ?? null, doc.client_ref_id ?? null,
@@ -1511,7 +1934,7 @@ const InvoiceRepository = {
         doc.issuer_name ?? null, doc.issuer_tax_id ?? null, JSON.stringify(doc.items ?? []), JSON.stringify(doc.tax_summary ?? []),
         doc.subtotal_cents, doc.tax_rate_pct, doc.tax_cents, doc.total_cents, doc.currency ?? 'MZN', doc.status ?? 'issued', doc.notes ?? null,
         signature.hash, signature.previous_hash, signature.hash_control, signature.signed_at, doc.issued_by ?? null,
-        doc.related_invoice_id ?? null, doc.related_number ?? null,
+        doc.related_invoice_id ?? null, doc.related_number ?? null, doc.due_date ?? null,
         cid, issuedAt,
       ]);
 
@@ -1688,6 +2111,397 @@ const InvoiceRepository = {
       issued_total_cents: Number(r.issued_total), paid_total_cents: Number(r.paid_total),
       credited_total_cents: Number(r.credited_total),
     };
+  },
+
+  /**
+   * Dívida em aberto de um cliente, em centavos (§ 3.35).
+   *
+   * Conta as faturas de VENDA emitidas e não pagas, e desconta as notas de
+   * crédito emitidas ao mesmo cliente: sem esse desconto, um cliente a quem se
+   * creditou uma devolução continuava a aparecer a dever o valor devolvido, e o
+   * limite de crédito travava-o por dinheiro que já não existe.
+   *
+   * @param {string} clientRefId
+   * @returns {Promise<number>}
+   */
+  async outstandingForClient(clientRefId) {
+    if (!clientRefId) return 0;
+    const params = [clientRefId];
+    const { rows } = await pool.query(`
+      SELECT
+        COALESCE(SUM(total_cents) FILTER (WHERE doc_type IN ('FT','FR') AND status = 'issued'), 0) AS devido,
+        COALESCE(SUM(total_cents) FILTER (WHERE doc_type = 'NC' AND status <> 'void'), 0)          AS creditado
+      FROM invoices
+      WHERE client_ref_id = $1${companyClause(params)}
+    `, params);
+    return Math.max(0, Number(rows[0].devido) - Number(rows[0].creditado));
+  },
+};
+
+// ─── TransferRepository / CountRepository ─────────────────────────────────────
+// Transferências entre filiais e contagens de inventário (spec § 3.36).
+
+/** @param {object} row @returns {object} */
+function rowToTransfer(row) {
+  return {
+    id:             row.id,
+    code:           row.code,
+    origin_id:      row.origin_id,
+    destination_id: row.destination_id,
+    status:         row.status,
+    notes:          row.notes ?? null,
+    dispatched_at:  row.dispatched_at ? isoOf(row.dispatched_at) : null,
+    dispatched_by:  row.dispatched_by ?? null,
+    received_at:    row.received_at ? isoOf(row.received_at) : null,
+    received_by:    row.received_by ?? null,
+    created_at:     isoOf(row.created_at),
+    updated_at:     isoOf(row.updated_at),
+    items:          [],
+  };
+}
+
+const TransferRepository = {
+  /**
+   * Cria a transferência e o manifesto numa transação.
+   *
+   * Uma transferência sem itens não é meia transferência — é uma linha órfã que
+   * alguém vai despachar sem carga. Por isso os dois numa transação só.
+   *
+   * @param {object} transfer
+   * @param {object[]} items
+   */
+  async create(transfer, items) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const { rows } = await client.query(`
+        INSERT INTO warehouse_transfers (
+          id, company_id, code, origin_id, destination_id, status, notes, created_at, updated_at
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+        RETURNING *
+      `, [
+        transfer.id, transfer.company_id ?? writeCompanyId(), transfer.code,
+        transfer.origin_id, transfer.destination_id, transfer.status,
+        transfer.notes ?? null, transfer.created_at, transfer.updated_at,
+      ]);
+
+      for (const item of items) {
+        await client.query(`
+          INSERT INTO warehouse_transfer_items (id, transfer_id, order_id, tracking_code, status)
+          VALUES ($1,$2,$3,$4,$5)
+        `, [item.id, transfer.id, item.order_id, item.tracking_code ?? null, item.status]);
+      }
+
+      await client.query('COMMIT');
+      return { ...rowToTransfer(rows[0]), items };
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+  },
+
+  async findById(id) {
+    const params = [id];
+    const { rows } = await pool.query(
+      `SELECT * FROM warehouse_transfers WHERE id = $1${companyClause(params)} LIMIT 1`,
+      params,
+    );
+    if (rows.length === 0) return undefined;
+
+    const { rows: itens } = await pool.query(
+      'SELECT * FROM warehouse_transfer_items WHERE transfer_id = $1 ORDER BY created_at',
+      [id],
+    );
+    return { ...rowToTransfer(rows[0]), items: itens };
+  },
+
+  /** @param {{ warehouse_id?: string, status?: string }} [opts] */
+  async list(opts = {}) {
+    const params = [];
+    const clauses = [];
+    if (opts.warehouse_id) {
+      // Um armazém vê o que sai E o que entra: são as duas pontas do mesmo
+      // problema, e obrigar a duas consultas escondia metade.
+      params.push(opts.warehouse_id);
+      clauses.push(`(origin_id = $${params.length} OR destination_id = $${params.length})`);
+    }
+    if (opts.status) { params.push(opts.status); clauses.push(`status = $${params.length}`); }
+
+    const cid = readCompanyId();
+    if (cid) { params.push(cid); clauses.push(`company_id = $${params.length}`); }
+
+    const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+    const { rows } = await pool.query(
+      `SELECT * FROM warehouse_transfers ${where} ORDER BY created_at DESC LIMIT 200`,
+      params,
+    );
+    return rows.map(rowToTransfer);
+  },
+
+  async update(id, patch) {
+    const sets = [];
+    const params = [];
+    const col = (name, value) => { params.push(value); sets.push(`${name} = $${params.length}`); };
+    for (const campo of ['status', 'notes', 'dispatched_at', 'dispatched_by', 'received_at', 'received_by', 'updated_at']) {
+      if (patch[campo] !== undefined) col(campo, patch[campo]);
+    }
+    if (sets.length === 0) return TransferRepository.findById(id);
+
+    params.push(id);
+    const { rows } = await pool.query(
+      `UPDATE warehouse_transfers SET ${sets.join(', ')} WHERE id = $${params.length}${companyClause(params)} RETURNING *`,
+      params,
+    );
+    if (rows.length === 0) return undefined;
+
+    const { rows: itens } = await pool.query(
+      'SELECT * FROM warehouse_transfer_items WHERE transfer_id = $1 ORDER BY created_at',
+      [id],
+    );
+    return { ...rowToTransfer(rows[0]), items: itens };
+  },
+
+  async updateItemStatus(itemId, status) {
+    await pool.query(
+      'UPDATE warehouse_transfer_items SET status = $1, updated_at = NOW() WHERE id = $2',
+      [status, itemId],
+    );
+  },
+
+  /** Acrescenta ao manifesto o que chegou sem lá estar (§ 3.36, decisão 2). */
+  async addItem(transferId, item) {
+    const { rows } = await pool.query(`
+      INSERT INTO warehouse_transfer_items (id, transfer_id, order_id, tracking_code, status)
+      VALUES ($1,$2,$3,$4,$5)
+      ON CONFLICT (transfer_id, order_id) DO UPDATE SET status = EXCLUDED.status, updated_at = NOW()
+      RETURNING *
+    `, [item.id, transferId, item.order_id, item.tracking_code ?? null, item.status]);
+    return rows[0];
+  },
+};
+
+/** @param {object} row @returns {object} */
+function rowToCount(row) {
+  return {
+    id:           row.id,
+    warehouse_id: row.warehouse_id,
+    status:       row.status,
+    expected:     row.expected ?? [],
+    scanned:      row.scanned ?? [],
+    result:       row.result ?? null,
+    notes:        row.notes ?? null,
+    opened_by:    row.opened_by ?? null,
+    closed_by:    row.closed_by ?? null,
+    opened_at:    isoOf(row.opened_at),
+    closed_at:    row.closed_at ? isoOf(row.closed_at) : null,
+  };
+}
+
+const CountRepository = {
+  async create(count) {
+    const { rows } = await pool.query(`
+      INSERT INTO warehouse_counts (
+        id, company_id, warehouse_id, status, expected, scanned, opened_by, opened_at
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+      RETURNING *
+    `, [
+      count.id, count.company_id ?? writeCompanyId(), count.warehouse_id, count.status,
+      JSON.stringify(count.expected ?? []), JSON.stringify(count.scanned ?? []),
+      count.opened_by ?? null, count.opened_at,
+    ]);
+    return rowToCount(rows[0]);
+  },
+
+  async findById(id) {
+    const params = [id];
+    const { rows } = await pool.query(
+      `SELECT * FROM warehouse_counts WHERE id = $1${companyClause(params)} LIMIT 1`,
+      params,
+    );
+    return rows.length ? rowToCount(rows[0]) : undefined;
+  },
+
+  /**
+   * A contagem aberta de um armazém, se houver.
+   *
+   * Duas contagens abertas ao mesmo tempo no mesmo armazém dariam dois
+   * relatórios contraditórios sobre o mesmo instante.
+   */
+  async findOpenByWarehouse(warehouseId) {
+    const params = [warehouseId];
+    const { rows } = await pool.query(
+      `SELECT * FROM warehouse_counts WHERE warehouse_id = $1 AND status = 'open'${companyClause(params)} LIMIT 1`,
+      params,
+    );
+    return rows.length ? rowToCount(rows[0]) : undefined;
+  },
+
+  async listByWarehouse(warehouseId) {
+    const params = [warehouseId];
+    const { rows } = await pool.query(
+      `SELECT * FROM warehouse_counts WHERE warehouse_id = $1${companyClause(params)} ORDER BY opened_at DESC LIMIT 50`,
+      params,
+    );
+    return rows.map(rowToCount);
+  },
+
+  async update(id, patch) {
+    const sets = [];
+    const params = [];
+    const col = (name, value) => { params.push(value); sets.push(`${name} = $${params.length}`); };
+    if (patch.status   !== undefined) col('status', patch.status);
+    if (patch.scanned  !== undefined) col('scanned', JSON.stringify(patch.scanned));
+    if (patch.result   !== undefined) col('result', JSON.stringify(patch.result));
+    if (patch.notes    !== undefined) col('notes', patch.notes);
+    if (patch.closed_by !== undefined) col('closed_by', patch.closed_by);
+    if (patch.closed_at !== undefined) col('closed_at', patch.closed_at);
+    if (sets.length === 0) return CountRepository.findById(id);
+
+    params.push(id);
+    const { rows } = await pool.query(
+      `UPDATE warehouse_counts SET ${sets.join(', ')} WHERE id = $${params.length}${companyClause(params)} RETURNING *`,
+      params,
+    );
+    return rows.length ? rowToCount(rows[0]) : undefined;
+  },
+};
+
+// ─── ContractRepository ───────────────────────────────────────────────────────
+// Contratos de cliente (spec § 3.35). As tarifas negociadas vivem em JSONB na
+// própria linha — ver a nota em migrations/contracts.js.
+
+/**
+ * @param {object} row
+ * @returns {object}
+ */
+function rowToContract(row) {
+  return {
+    id:                   row.id,
+    client_ref_id:        row.client_ref_id,
+    code:                 row.code,
+    status:               row.status,
+    // DATE volta do driver como Date; a camada de aplicação compara strings
+    // YYYY-MM-DD. Ver `dateOnly` para o porquê de não ser `toISOString`.
+    starts_on:            dateOnly(row.starts_on),
+    ends_on:              dateOnly(row.ends_on) ?? null,
+    discount_pct:         Number(row.discount_pct),
+    minimum_charge_cents: Number(row.minimum_charge_cents),
+    payment_terms_days:   Number(row.payment_terms_days),
+    credit_limit_cents:   Number(row.credit_limit_cents),
+    zone_rates:           row.zone_rates ?? [],
+    notes:                row.notes ?? null,
+    created_at:           row.created_at,
+    updated_at:           row.updated_at,
+  };
+}
+
+const ContractRepository = {
+  /**
+   * @param {{ client_ref_id?: string, status?: string }} [opts]
+   * @returns {Promise<object[]>}
+   */
+  async list(opts = {}) {
+    const params = [];
+    const clauses = [];
+    if (opts.client_ref_id) { params.push(opts.client_ref_id); clauses.push(`client_ref_id = $${params.length}`); }
+    if (opts.status)        { params.push(opts.status);        clauses.push(`status = $${params.length}`); }
+
+    const cid = readCompanyId();
+    if (cid) { params.push(cid); clauses.push(`company_id = $${params.length}`); }
+
+    const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+    const { rows } = await pool.query(
+      `SELECT * FROM client_contracts ${where} ORDER BY starts_on DESC, created_at DESC`,
+      params,
+    );
+    return rows.map(rowToContract);
+  },
+
+  /** Todos os contratos de um cliente — a resolução por data é da aplicação. */
+  async listByClient(clientRefId) {
+    return ContractRepository.list({ client_ref_id: clientRefId });
+  },
+
+  async findById(id) {
+    const params = [id];
+    const { rows } = await pool.query(
+      `SELECT * FROM client_contracts WHERE id = $1${companyClause(params)} LIMIT 1`,
+      params,
+    );
+    return rows.length ? rowToContract(rows[0]) : undefined;
+  },
+
+  async findByCode(code) {
+    const params = [code];
+    const { rows } = await pool.query(
+      `SELECT * FROM client_contracts WHERE code = $1${companyClause(params)} LIMIT 1`,
+      params,
+    );
+    return rows.length ? rowToContract(rows[0]) : undefined;
+  },
+
+  async create(contract) {
+    const { rows } = await pool.query(`
+      INSERT INTO client_contracts (
+        id, company_id, client_ref_id, code, status, starts_on, ends_on,
+        discount_pct, minimum_charge_cents, payment_terms_days, credit_limit_cents,
+        zone_rates, notes, created_at, updated_at
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+      RETURNING *
+    `, [
+      contract.id,
+      contract.company_id ?? writeCompanyId(),
+      contract.client_ref_id,
+      contract.code,
+      contract.status,
+      contract.starts_on,
+      contract.ends_on ?? null,
+      contract.discount_pct ?? 0,
+      contract.minimum_charge_cents ?? 0,
+      contract.payment_terms_days ?? 0,
+      contract.credit_limit_cents ?? 0,
+      JSON.stringify(contract.zone_rates ?? []),
+      contract.notes ?? null,
+      contract.created_at,
+      contract.updated_at,
+    ]);
+    return rowToContract(rows[0]);
+  },
+
+  async update(id, contract) {
+    const params = [
+      contract.code,
+      contract.status,
+      contract.starts_on,
+      contract.ends_on ?? null,
+      contract.discount_pct ?? 0,
+      contract.minimum_charge_cents ?? 0,
+      contract.payment_terms_days ?? 0,
+      contract.credit_limit_cents ?? 0,
+      JSON.stringify(contract.zone_rates ?? []),
+      contract.notes ?? null,
+      contract.updated_at,
+      id,
+    ];
+    const { rows } = await pool.query(`
+      UPDATE client_contracts SET
+        code                 = $1,
+        status               = $2,
+        starts_on            = $3,
+        ends_on              = $4,
+        discount_pct         = $5,
+        minimum_charge_cents = $6,
+        payment_terms_days   = $7,
+        credit_limit_cents   = $8,
+        zone_rates           = $9,
+        notes                = $10,
+        updated_at           = $11
+      WHERE id = $12${companyClause(params)}
+      RETURNING *
+    `, params);
+    return rows.length ? rowToContract(rows[0]) : undefined;
   },
 };
 
@@ -2686,6 +3500,11 @@ const FinanceRepository={
  async voidEntry(id,userId){const p=[userId,id];const{rows}=await pool.query(`UPDATE finance_entries SET status='void',voided_by=$1,voided_at=NOW(),updated_at=NOW() WHERE id=$2 AND status='open'${companyClause(p)} RETURNING *`,p);return rows[0];},
  async summary(){const p=[];const{rows}=await pool.query(`SELECT COALESCE(SUM(amount_cents) FILTER(WHERE type='receivable' AND status='paid'),0) AS income,COALESCE(SUM(amount_cents) FILTER(WHERE type='payable' AND status='paid'),0) AS expense,COALESCE(SUM(amount_cents) FILTER(WHERE type='receivable' AND status='open'),0) AS receivable,COALESCE(SUM(amount_cents) FILTER(WHERE type='payable' AND status='open'),0) AS payable,COALESCE(SUM(amount_cents) FILTER(WHERE status='open' AND due_date<CURRENT_DATE),0) AS overdue FROM finance_entries${companyWhere(p)}`,p);const r=rows[0];return{cash_balance_cents:Number(r.income)-Number(r.expense),income_paid_cents:Number(r.income),expense_paid_cents:Number(r.expense),receivable_open_cents:Number(r.receivable),payable_open_cents:Number(r.payable),overdue_cents:Number(r.overdue)};}
 };
+/** Modais de duas/três rodas (§ 3.33) — usado para agregar a frota de última milha. */
+const MODAL_TWO_THREE_WHEELS = new Set(
+  require('../domain/delivery-modals').listModals().filter((m) => m.wheels <= 3).map((m) => m.code),
+);
+
 const FleetRepository={
  async listVehicles(){const p=[];const{rows}=await pool.query(`SELECT *,CASE WHEN insurance_expiry<CURRENT_DATE OR inspection_expiry<CURRENT_DATE THEN TRUE ELSE FALSE END AS document_expired,CASE WHEN insurance_expiry BETWEEN CURRENT_DATE AND CURRENT_DATE+30 OR inspection_expiry BETWEEN CURRENT_DATE AND CURRENT_DATE+30 THEN TRUE ELSE FALSE END AS document_expiring FROM fleet_vehicles${companyWhere(p)} ORDER BY plate`,p);return rows;},
  async findVehicle(id){const p=[id];const{rows}=await pool.query(`SELECT * FROM fleet_vehicles WHERE id=$1${companyClause(p)} LIMIT 1`,p);return rows[0];},
@@ -2693,7 +3512,13 @@ const FleetRepository={
  async latestFullFuel(vehicleId){const p=[vehicleId];const{rows}=await pool.query(`SELECT * FROM fleet_fuel_entries WHERE vehicle_id=$1 AND full_tank=TRUE${companyClause(p)} ORDER BY odometer_km DESC LIMIT 1`,p);return rows[0];},
  async createFuel(f){const c=await pool.connect();try{await c.query('BEGIN');const{rows}=await c.query(`INSERT INTO fleet_fuel_entries(id,company_id,vehicle_id,fuel_date,odometer_km,volume_ml,cost_cents,full_tank,station,driver_id,consumption_l_per_100km,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,[f.id,writeCompanyId(),f.vehicle_id,f.fuel_date,f.odometer_km,f.volume_ml,f.cost_cents,f.full_tank,f.station??null,f.driver_id??null,f.consumption_l_per_100km??null,f.created_by??null]);await c.query(`UPDATE fleet_vehicles SET odometer_km=$1,updated_at=NOW() WHERE id=$2 AND company_id=$3`,[f.odometer_km,f.vehicle_id,writeCompanyId()]);await c.query('COMMIT');return rows[0];}catch(e){await c.query('ROLLBACK');throw e;}finally{c.release();}},
  async listFuel(vehicleId){const p=[];let w=companyWhere(p,'f');if(vehicleId){p.push(vehicleId);w+=`${w?' AND':' WHERE'} f.vehicle_id=$${p.length}`;}const{rows}=await pool.query(`SELECT f.*,v.plate,v.make,v.model FROM fleet_fuel_entries f JOIN fleet_vehicles v ON v.id=f.vehicle_id AND v.company_id=f.company_id${w} ORDER BY f.fuel_date DESC,f.created_at DESC`,p);return rows.map(r=>({...r,consumption_l_per_100km:r.consumption_l_per_100km==null?null:Number(r.consumption_l_per_100km)}));},
- async stats(){const p=[];const v=(await pool.query(`SELECT COUNT(*)::int total,COUNT(*) FILTER(WHERE status!='inactive')::int active,COUNT(*) FILTER(WHERE status='maintenance')::int maintenance FROM fleet_vehicles${companyWhere(p)}`,p)).rows[0];const q=[];const f=(await pool.query(`SELECT COALESCE(SUM(cost_cents),0) cost,COALESCE(SUM(volume_ml),0) volume,COALESCE(AVG(consumption_l_per_100km) FILTER(WHERE consumption_l_per_100km IS NOT NULL),0) consumption FROM fleet_fuel_entries${companyWhere(q)}`,q)).rows[0];return{total:Number(v.total),active:Number(v.active),maintenance:Number(v.maintenance),fuel_cost_cents:Number(f.cost),fuel_volume_ml:Number(f.volume),average_consumption:Number(f.consumption)};}
+ async stats(){const p=[];const v=(await pool.query(`SELECT COUNT(*)::int total,COUNT(*) FILTER(WHERE status!='inactive')::int active,COUNT(*) FILTER(WHERE status='maintenance')::int maintenance FROM fleet_vehicles${companyWhere(p)}`,p)).rows[0];const q=[];const f=(await pool.query(`SELECT COALESCE(SUM(cost_cents),0) cost,COALESCE(SUM(volume_ml),0) volume,COALESCE(AVG(consumption_l_per_100km) FILTER(WHERE consumption_l_per_100km IS NOT NULL),0) consumption FROM fleet_fuel_entries${companyWhere(q)}`,q)).rows[0];
+  // Contagem por modal (§ 3.33) agregada em SQL, não em JavaScript sobre a
+  // lista toda: a frota de duas/três rodas é a que mais cresce e é a métrica
+  // que a operação abre todos os dias.
+  const m=[];const byModal=(await pool.query(`SELECT COALESCE(vehicle_type,'INDEFINIDO') modal,COUNT(*)::int total FROM fleet_vehicles${companyWhere(m)} GROUP BY 1 ORDER BY 2 DESC`,m)).rows;
+  const two=byModal.filter(r=>MODAL_TWO_THREE_WHEELS.has(r.modal)).reduce((s,r)=>s+Number(r.total),0);
+  return{total:Number(v.total),active:Number(v.active),maintenance:Number(v.maintenance),fuel_cost_cents:Number(f.cost),fuel_volume_ml:Number(f.volume),average_consumption:Number(f.consumption),by_modal:byModal.map(r=>({modal:r.modal,total:Number(r.total)})),two_three_wheelers:two};}
 };
 const HrOperationsRepository = {
   async list(table) { const params=[]; const {rows}=await pool.query(`SELECT * FROM ${table}${companyWhere(params)} ORDER BY created_at DESC`,params); return rows; },
@@ -2742,4 +3567,4 @@ const HrPortalRepository = {
   ]);return{profile:profile.rows[0],leave_balance:balances.rows[0]||null,attendance:attendance.rows,leaves:leaves.rows,time_bank_minutes:Number(timeBank.rows[0]?.balance_minutes||0),time_bank:timeBank.rows,documents:documents.rows,trainings:trainings.rows,benefits:benefits.rows.map(r=>({...r,amount_cents:Number(r.amount_cents),balance_cents:Number(r.balance_cents)})),performance:performance.rows,payslips:payslips.rows.map(r=>({...r,base_salary_cents:Number(r.base_salary_cents),gross_cents:Number(r.gross_cents),deductions_cents:Number(r.deductions_cents),net_cents:Number(r.net_cents)}))};}
 };
 
-module.exports = { OrderRepository, DriverRepository, UserRepository, UserLocationRepository, WarehouseRepository, SettlementRepository, SupportRepository, ClientRepository, PricingRepository, InvoiceRepository, DocumentSeriesRepository, AuditRepository, PasswordResetRepository, CompanyRepository, CompanyProfileRepository, PlanRepository, SubscriptionRepository, UsageRepository, SubscriptionInvoiceRepository, HrRepository, HrOperationsRepository, HrPortalRepository, FinanceRepository, FleetRepository };
+module.exports = { dateOnly, OrderRepository, DriverRepository, UserRepository, UserLocationRepository, WarehouseRepository, SettlementRepository, SupportRepository, ClientRepository, ContractRepository, TransferRepository, CountRepository, PricingRepository, InvoiceRepository, DocumentSeriesRepository, AuditRepository, PasswordResetRepository, CompanyRepository, CompanyProfileRepository, PlanRepository, SubscriptionRepository, UsageRepository, SubscriptionInvoiceRepository, HrRepository, HrOperationsRepository, HrPortalRepository, FinanceRepository, FleetRepository };

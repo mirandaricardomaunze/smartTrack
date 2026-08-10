@@ -1,0 +1,17 @@
+// ESLint do portal do cliente. Mesmas regras do painel administrativo — ver a
+// nota longa em frontend/admin-panel/.eslintrc.json para o porquê de cada uma.
+{
+  "extends": "next/core-web-vitals",
+  "rules": {
+    "no-console": ["warn", { "allow": ["warn", "error", "info"] }],
+    "eqeqeq": ["error", "smart"],
+    "prefer-const": "error"
+  },
+  "overrides": [
+    {
+      "files": ["**/*.spec.ts", "**/*.spec.tsx", "**/*.test.ts", "**/*.test.tsx"],
+      "rules": { "no-console": "off" }
+    }
+  ],
+  "ignorePatterns": ["node_modules/", ".next/", "next-env.d.ts"]
+}

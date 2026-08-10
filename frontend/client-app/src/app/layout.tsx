@@ -1,12 +1,5 @@
 import type { Metadata } from 'next';
-import { Inter } from 'next/font/google';
 import './globals.css';
-
-const inter = Inter({
-  subsets: ['latin'],
-  display: 'swap',
-  variable: '--font-inter',
-});
 
 export const metadata: Metadata = {
   title: 'SmartTrack - Portal do Cliente',
@@ -19,7 +12,17 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="pt-BR" className={inter.variable}>
+    <html lang="pt-BR">
+      <head>
+        {/* Ver a nota do preload no admin-panel: evita o salto de tipo de letra. */}
+        <link
+          rel="preload"
+          href="/fonts/inter-latin.woff2"
+          as="font"
+          type="font/woff2"
+          crossOrigin="anonymous"
+        />
+      </head>
       <body className="bg-surface-base text-slate-100 min-h-screen flex flex-col">
         {/* Simple Navigation */}
         <header className="h-16 border-b border-white/[0.06] bg-surface flex items-center justify-between px-6 sticky top-0 z-50">

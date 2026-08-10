@@ -6,8 +6,10 @@
  *
  * Endpoints:
  *   GET  /v1/drivers                  — Lista todos os motoristas
+ *   POST /v1/drivers                  — Registra um motorista
  *   GET  /v1/drivers/stats            — Contagens por status (useSidebarStats)
  *   GET  /v1/drivers/locations        — Posições GPS (para mapa ao vivo)
+ *   POST /v1/drivers/:id/access       — Cria o acesso à aplicação do motorista
  *   PUT  /v1/drivers/:id/gps          — Atualiza posição GPS
  */
 'use strict';
@@ -17,11 +19,15 @@ const {
   listDrivers,
   listDriverLocations,
   updateDriverGps,
+  createDriver,
+  grantDriverAccess,
   DriverNotFoundError,
   InvalidGpsPayloadError,
+  DriverAccessError,
 } = require('../application/drivers.service');
 
 const { DriverRepository } = require('../infrastructure/pg.repository');
+const driverPerformance = require('../application/driver-performance.service');
 
 const {
   requireAuth,
@@ -37,6 +43,7 @@ function handleError(err, res) {
   const known = [
     DriverNotFoundError,
     InvalidGpsPayloadError,
+    DriverAccessError,
     UnauthorizedError,
     ForbiddenError,
   ];
@@ -46,9 +53,44 @@ function handleError(err, res) {
     return res.status(err.statusCode ?? 400).json({ error: err.message });
   }
 
+  // Limite de utilizadores do plano (SaaS, spec § 2.5) — o acesso do motorista
+  // é uma conta e conta para a quota.
+  if (err.statusCode === 402) {
+    return res.status(402).json({ error: err.message, code: err.name });
+  }
+
   console.error('[drivers.router] Erro inesperado:', err);
   return res.status(500).json({ error: 'Erro interno do servidor.' });
 }
+
+// ─── POST /v1/drivers ────────────────────────────────────────────────────────
+// O painel tinha um botão de adicionar que só mexia no estado do React; sem este
+// endpoint não havia como uma empresa nova cadastrar os seus motoristas.
+router.post('/', requireAuth, requireRoles(['ADMIN']), async (req, res) => {
+  try {
+    const driver = await createDriver(req.body ?? {}, {
+      actor: req.user, ip: req.ip, request_id: req.requestId,
+    });
+    res.status(201).json(driver);
+  } catch (err) {
+    handleError(err, res);
+  }
+});
+
+// ─── POST /v1/drivers/:id/access ─────────────────────────────────────────────
+// Cria a conta com que o motorista entra na aplicação. É a única porta para um
+// acesso DRIVER, porque só aqui a conta fica com o id do motorista — sem isso a
+// aplicação autentica e não encontra rota nem entregas (ver o serviço).
+router.post('/:id/access', requireAuth, requireRoles(['ADMIN']), async (req, res) => {
+  try {
+    const account = await grantDriverAccess(req.params.id, req.body ?? {}, {
+      actor: req.user, ip: req.ip, request_id: req.requestId,
+    });
+    res.status(201).json(account);
+  } catch (err) {
+    handleError(err, res);
+  }
+});
 
 // ─── GET /v1/drivers ─────────────────────────────────────────────────────────
 router.get('/', requireAuth, requireRoles(['ADMIN']), async (_req, res) => {
@@ -88,6 +130,32 @@ router.put('/:id/gps', requireAuth, requireSelfOrRoles(['ADMIN']), async (req, r
     res.json(result);
   } catch (err) {
     handleError(err, res);
+  }
+});
+
+// ─── Desempenho (spec § 3.43) ─────────────────────────────────────────────────
+// Calculado das encomendas, não lido do cadastro: os valores que lá estavam
+// eram fixos e nunca foram recalculados.
+//
+// Declarado ANTES de qualquer rota `/:id`, ou o Express casaria "performance"
+// como um identificador de motorista.
+router.get('/performance', requireAuth, requireRoles(['ADMIN', 'SUPPORT']), async (req, res) => {
+  try {
+    res.json(await driverPerformance.getDriversPerformance({ from: req.query.from, to: req.query.to }));
+  } catch (err) {
+    console.error('[drivers.router] Erro inesperado:', err.message);
+    res.status(500).json({ error: 'Erro interno do servidor.' });
+  }
+});
+
+router.get('/:id/performance', requireAuth, requireRoles(['ADMIN', 'SUPPORT']), async (req, res) => {
+  try {
+    res.json(await driverPerformance.getDriverPerformance(req.params.id, {
+      from: req.query.from, to: req.query.to,
+    }));
+  } catch (err) {
+    console.error('[drivers.router] Erro inesperado:', err.message);
+    res.status(500).json({ error: 'Erro interno do servidor.' });
   }
 });
 

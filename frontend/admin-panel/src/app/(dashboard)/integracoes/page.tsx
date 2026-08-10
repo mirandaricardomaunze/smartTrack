@@ -102,33 +102,39 @@ const INTERNAL_SERVICES: ServiceCard[] = [
   },
 ];
 
-/** Conectores de terceiros — declarativos, dependem de credenciais no backend */
+/**
+ * Conectores de terceiros — declarativos, dependem de credenciais no backend.
+ *
+ * `tag` é a sigla desenhada no quadrado à esquerda do cartão. São letras e não
+ * emoji: o sistema não usa emoji em lado nenhum (não sobrevivem a impressão nem
+ * a leitores de ecrã, e mudam de desenho conforme o sistema operativo do posto).
+ */
 const EXTERNAL_CONNECTORS = [
   {
     key: '17track',
     name: '17TRACK',
-    icon: '🌐',
+    tag: '17',
     description: 'Rastreio internacional multi-transportadora.',
     detail: 'Requer API key e o tracking-intl-service em execução.',
   },
   {
     key: 'cainiao',
     name: 'Cainiao',
-    icon: '📦',
+    tag: 'CN',
     description: 'Rede logística Alibaba — encomendas com origem na China.',
     detail: 'Mapeamento de status via StatusMapper (este já está implementado).',
   },
   {
     key: 'fcm',
     name: 'Firebase Cloud Messaging',
-    icon: '🔔',
+    tag: 'FCM',
     description: 'Push notifications para os apps cliente e motorista.',
     detail: 'O notifications-service já existe, mas usa um FCM simulado — sem credenciais Firebase, nenhum push chega a um telemóvel.',
   },
   {
     key: 'kafka',
     name: 'Kafka',
-    icon: '🔀',
+    tag: 'KF',
     description: 'Barramento de eventos entre microsserviços.',
     detail: 'Declarado em infra/docker/docker-compose.yml — sem produtor/consumidor ativo.',
   },
@@ -363,8 +369,9 @@ export default function IntegracoesPage() {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {EXTERNAL_CONNECTORS.map((conn) => (
             <div key={conn.key} className="card flex items-start gap-4">
-              <div className="w-11 h-11 rounded-xl bg-surface-overlay flex items-center justify-center text-xl shrink-0">
-                {conn.icon}
+              <div className="w-11 h-11 rounded-xl bg-surface-overlay flex items-center justify-center shrink-0
+                              text-xs font-bold tracking-tight text-slate-400" aria-hidden="true">
+                {conn.tag}
               </div>
               <div className="min-w-0 flex-1 flex flex-col gap-1.5">
                 <div className="flex items-center justify-between gap-3">

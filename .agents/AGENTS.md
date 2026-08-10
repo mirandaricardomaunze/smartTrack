@@ -61,6 +61,17 @@ Leia `docs/spec/especificacao-tecnica-v1.md` antes de propor mudanças arquitetu
 
 ## 2. Regras Globais para Agentes
 
+### 2.0 Idioma do código e nomenclatura
+
+- Antes de criar ou renomear identificadores, ler `docs/spec/code-language-policy.md`.
+- Código técnico novo (variáveis, funções, classes, tipos, ficheiros, campos novos de
+  API/banco/eventos) deve usar inglês.
+- Texto apresentado ao utilizador e termos legais permanecem em português.
+- Não quebrar contratos existentes apenas para traduzir nomes; aplicar a sequência
+  de migração e o padrão expand/contract definidos na spec.
+- Testes de nomenclatura devem usar `CodeLanguagePolicy` e `NamingPolicyFactory` do
+  `tests/harness`, nunca listas ad-hoc duplicadas.
+
 ### 2.1 Segurança (NUNCA violar)
 
 - **Nunca** hardcode credenciais, chaves de API, secrets ou tokens em código-fonte.

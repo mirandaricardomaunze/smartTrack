@@ -196,6 +196,7 @@ async function listOrders(opts = {}) {
     search: opts.search,
     driver_id: opts.driver_id,
     warehouse_id: opts.warehouse_id,
+    branch_id: opts.branch_id,
     cod_status: opts.cod_status,
     from: opts.from,
     to: opts.to,
@@ -220,6 +221,16 @@ async function createOrder(dto) {
   // Limite do plano da empresa (SaaS, spec § 2.5). Não faz nada sem empresa no
   // contexto (testes/tarefas de fundo) nem em planos sem limite.
   await assertQuota();
+
+  // Limite de crédito do contrato (§ 3.35). Trava ANTES de gravar: aceitar a
+  // encomenda e recusar a fatura depois deixa a operação a transportar carga de
+  // um cliente que já não devia estar a receber serviço. Sem cliente registado,
+  // sem contrato ou sem limite acordado, não faz nada.
+  // `require` à chamada — `contracts.service` fecha um ciclo com o repositório.
+  if (dto.client_ref_id) {
+    const contracts = require('./contracts.service');
+    await contracts.assertWithinCredit(String(dto.client_ref_id).trim(), Number(dto.value) || 0);
+  }
 
   const code = dto.tracking_code.trim().toUpperCase();
   validateTrackingCode(code);
@@ -291,6 +302,38 @@ async function getOrderTracking(trackingCode) {
   const order = await OrderRepository.findByCode(code);
   if (!order) throw new OrderNotFoundError(code);
   return order;
+}
+
+/**
+ * Imagens do comprovativo de um pedido, por id (spec § 3.28).
+ *
+ * Carregadas à parte: uma assinatura chega a 2,2 MB e nenhuma listagem precisa
+ * delas. O `findById` antes da leitura não é cerimónia — é o que garante que o
+ * pedido pertence à empresa de quem pergunta antes de a prova sair da base.
+ *
+ * @param {string} orderId
+ * @returns {Promise<{ signature?: string, photo?: string }>}
+ */
+async function getPodImages(orderId) {
+  const order = await OrderRepository.findById(orderId);
+  if (!order) throw new OrderNotFoundError(orderId);
+  if (!order.pod) return {};
+  return OrderRepository.findPodImages(order.id);
+}
+
+/**
+ * O mesmo, pelo código de rastreio — serve o portal público do cliente, que
+ * nunca teve login mas sempre mostrou a prova da sua própria entrega.
+ *
+ * @param {string} trackingCode
+ * @returns {Promise<{ signature?: string, photo?: string }>}
+ */
+async function getPodImagesByCode(trackingCode) {
+  const code  = String(trackingCode ?? '').trim().toUpperCase();
+  const order = await OrderRepository.findByCode(code);
+  if (!order) throw new OrderNotFoundError(code);
+  if (!order.pod) return {};
+  return OrderRepository.findPodImages(order.id);
 }
 
 /** Dados mínimos necessários ao motorista atribuído para executar a entrega. */
@@ -616,7 +659,13 @@ async function deliverOrder(orderId, dto) {
     } catch { /* faturação é best-effort */ }
   }
 
-  return updatedOrder;
+  // A resposta não devolve as imagens (spec § 3.28). Devolvê-las era mandar de
+  // volta pela rede móvel os megabytes que o motorista acabou de enviar, para
+  // um cliente que já os tem. A leitura do POD é sempre por metadados.
+  return {
+    ...updatedOrder,
+    pod: { ...pod, signature: undefined, photo: undefined, has_signature: Boolean(signature), has_photo: Boolean(photo) },
+  };
 }
 
 /**
@@ -899,6 +948,331 @@ async function requestWarehouseShipment(orderId, dto) {
  * @param {{ destination: string; notes?: string; lat?: number; lng?: number }} dto
  * @returns {Promise<object>} Pedido atualizado
  */
+// ─── Reagendamento e devolução ao remetente (spec § 3.37) ────────────────────
+
+/** Tentativas antes de a devolução passar a ser o único caminho. */
+const MAX_DELIVERY_ATTEMPTS = Number(process.env.DELIVERY_MAX_ATTEMPTS) || 3;
+
+/** Motivos de devolução ao remetente. */
+const VALID_RETURN_REASONS = ['ATTEMPTS_EXHAUSTED', 'REFUSED', 'WRONG_ADDRESS', 'SENDER_REQUEST', 'OTHER'];
+
+const RETURN_REASON_LABELS = {
+  ATTEMPTS_EXHAUSTED: 'tentativas esgotadas',
+  REFUSED:            'encomenda recusada',
+  WRONG_ADDRESS:      'morada incorreta',
+  SENDER_REQUEST:     'pedido do remetente',
+  OTHER:              'outro motivo',
+};
+
+/** Data no formato YYYY-MM-DD, ou null. PURA. */
+function parseScheduleDate(value) {
+  const s = String(value ?? '').slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null;
+}
+
+class RescheduleError extends Error {
+  constructor(message, statusCode = 400) {
+    super(message);
+    this.name = 'RescheduleError';
+    this.statusCode = statusCode;
+  }
+}
+
+class ReturnStateError extends Error {
+  constructor(status) {
+    super(`Não é possível devolver uma encomenda no estado "${status}".`);
+    this.name = 'ReturnStateError';
+    this.statusCode = 409;
+  }
+}
+
+/**
+ * Marca nova tentativa de entrega (§ 3.37).
+ *
+ * Só a partir de `failed`: reagendar uma entrega que ainda não foi tentada não
+ * significa nada. A data fica NO PEDIDO e não num comentário — é o que permite
+ * não pôr a encomenda numa rota antes do dia acordado, e aparecer no dia errado
+ * é falhar a entrega uma segunda vez com o cliente à espera.
+ *
+ * A encomenda volta a `in_transit`: fisicamente regressa ao circuito até à nova
+ * tentativa.
+ *
+ * @param {string} orderId
+ * @param {{ scheduled_for: string, notes?: string, user_id?: string }} dto
+ * @returns {Promise<object>}
+ */
+async function rescheduleDelivery(orderId, dto = {}) {
+  const order = await OrderRepository.findById(orderId);
+  if (!order) throw new OrderNotFoundError(orderId);
+  if (order.current_status !== OrderStatus.FAILED) {
+    throw new RescheduleError(
+      `Só se reagenda uma entrega falhada. Esta encomenda está em "${order.current_status}".`, 409,
+    );
+  }
+
+  const dia = parseScheduleDate(dto.scheduled_for);
+  if (!dia) throw new RescheduleError('A data da nova tentativa é obrigatória (AAAA-MM-DD).');
+
+  // Uma "nova tentativa" marcada para ontem é um erro de digitação que ninguém
+  // apanha depois — a encomenda fica marcada para uma data que já passou.
+  const hoje = new Date().toISOString().slice(0, 10);
+  if (dia < hoje) throw new RescheduleError('A nova tentativa não pode ser marcada para uma data passada.');
+
+  const tentativas = (order.delivery_attempts ?? 0) + 1;
+  if (tentativas > MAX_DELIVERY_ATTEMPTS) {
+    throw new RescheduleError(
+      `A encomenda já esgotou as ${MAX_DELIVERY_ATTEMPTS} tentativas permitidas. `
+      + 'O caminho agora é a devolução ao remetente.', 409,
+    );
+  }
+
+  const atualizado = await updateOrderStatus(orderId, {
+    new_status:   OrderStatus.IN_TRANSIT,
+    notes:        `Nova tentativa marcada para ${dia}.${dto.notes ? ` ${String(dto.notes).trim()}` : ''}`,
+    location:     destinationLabel(order),
+    event_origin: dto.event_origin ?? 'ADMIN',
+    user_id:      dto.user_id,
+  });
+
+  return OrderRepository.update({
+    ...atualizado,
+    delivery_attempts: tentativas,
+    next_attempt_on:   dia,
+    updated_at:        new Date().toISOString(),
+  });
+}
+
+/**
+ * Inicia a devolução ao remetente (§ 3.37).
+ *
+ * A encomenda viaja de volta em `in_transit` com o motivo registado. A partir de
+ * `failed` (falhou e desiste-se) ou de `at_warehouse` (voltou ao armazém e ficou
+ * lá) — são as duas situações reais em que se decide devolver.
+ *
+ * @param {string} orderId
+ * @param {{ reason: string, notes?: string, user_id?: string }} dto
+ * @returns {Promise<object>}
+ */
+async function startReturn(orderId, dto = {}) {
+  const order = await OrderRepository.findById(orderId);
+  if (!order) throw new OrderNotFoundError(orderId);
+
+  const podeDevolver = order.current_status === OrderStatus.FAILED
+    || order.current_status === OrderStatus.AT_WAREHOUSE;
+  if (!podeDevolver) throw new ReturnStateError(order.current_status);
+
+  const reason = String(dto.reason ?? '').trim().toUpperCase();
+  if (!VALID_RETURN_REASONS.includes(reason)) {
+    throw new RescheduleError(
+      `Motivo de devolução inválido. Use ${VALID_RETURN_REASONS.join(', ')}.`,
+    );
+  }
+
+  const now = new Date().toISOString();
+  const atualizado = await updateOrderStatus(orderId, {
+    new_status:   OrderStatus.IN_TRANSIT,
+    notes:        `Devolução ao remetente: ${RETURN_REASON_LABELS[reason]}.${dto.notes ? ` ${String(dto.notes).trim()}` : ''}`,
+    location:     'A caminho do remetente',
+    event_origin: dto.event_origin ?? 'ADMIN',
+    user_id:      dto.user_id,
+  });
+
+  return OrderRepository.update({
+    ...atualizado,
+    // A data marcada deixa de fazer sentido: já não vai haver nova tentativa.
+    next_attempt_on: null,
+    return_info: {
+      reason,
+      notes:      dto.notes ? String(dto.notes).trim().slice(0, 1000) : undefined,
+      started_at: now,
+      started_by: dto.user_id,
+    },
+    updated_at: now,
+  });
+}
+
+/**
+ * Confirma que a encomenda chegou de volta ao remetente (§ 3.37).
+ *
+ * Exige PROVA — quem recebeu de volta e quando. Uma devolução sem prova é
+ * indistinguível de uma encomenda perdida, e é precisamente aí que a discussão
+ * com o remetente acontece.
+ *
+ * O COD é cancelado: o dinheiro nunca foi cobrado, e deixá-lo `pending` fá-lo
+ * aparecer eternamente no que há a receber. Uma fatura ativa é ASSINALADA e não
+ * alterada — creditar automaticamente seria inventar uma política comercial
+ * (há quem cobre o frete na mesma, porque o trabalho foi feito). A nota de
+ * crédito emite-se pelo § 3.19, por decisão de quem responde pela conta.
+ *
+ * @param {string} orderId
+ * @param {{ received_by: string, signature?: string, photo?: string, notes?: string, user_id?: string }} dto
+ * @returns {Promise<object>}
+ */
+async function confirmReturn(orderId, dto = {}) {
+  const order = await OrderRepository.findById(orderId);
+  if (!order) throw new OrderNotFoundError(orderId);
+  if (!order.return_info) {
+    throw new ReturnStateError(`${order.current_status} (devolução não iniciada)`);
+  }
+  if (order.current_status !== OrderStatus.IN_TRANSIT) {
+    throw new ReturnStateError(order.current_status);
+  }
+
+  const recebidoPor = String(dto.received_by ?? '').trim();
+  if (!recebidoPor) throw new MissingRequiredFieldError('received_by');
+
+  const signature = validatePodImage(dto.signature, 'signature');
+  const photo     = validatePodImage(dto.photo, 'photo');
+
+  const now  = new Date().toISOString();
+  const desc = `Devolvida ao remetente — recebida por ${recebidoPor}.`;
+  const latest = order.history[0];
+  const parentHash = latest ? (latest.hash || GENESIS_HASH) : GENESIS_HASH;
+  const hash = calculateEventHash(OrderStatus.RETURNED, desc, 'Remetente', now, parentHash);
+
+  // Fatura ativa: assinalar, não mexer.
+  let invoiceAlert;
+  if (order.client_ref_id || order.id) {
+    const { InvoiceRepository } = require('../infrastructure/pg.repository');
+    const fatura = await InvoiceRepository.findActiveByOrderId(order.id);
+    if (fatura) {
+      invoiceAlert = {
+        invoice_id: fatura.id,
+        number: fatura.number,
+        status: fatura.status,
+        total_cents: fatura.total_cents,
+        note: 'Existe fatura ativa. Emitir nota de crédito (§ 3.19) se a política da empresa o exigir.',
+      };
+    }
+  }
+
+  // As imagens vão para `order_pod_images` — ver a nota em `saveReturnImages`.
+  await OrderRepository.saveReturnImages(order.id, { signature, photo });
+
+  return OrderRepository.update({
+    ...order,
+    current_status: OrderStatus.RETURNED,
+    // Nunca foi cobrado. `cancelled` e não `none`: `none` apagava o facto de
+    // ter existido um valor a cobrar.
+    cod_status: order.cod_amount > 0 ? 'cancelled' : order.cod_status,
+    return_info: {
+      ...order.return_info,
+      received_by:  recebidoPor,
+      received_at:  now,
+      has_signature: Boolean(signature),
+      has_photo:     Boolean(photo),
+      confirmed_by:  dto.user_id,
+      notes:         dto.notes ? String(dto.notes).trim().slice(0, 1000) : order.return_info.notes,
+      invoice_alert: invoiceAlert,
+    },
+    updated_at: now,
+    history: [
+      {
+        id: crypto.randomUUID(),
+        order_id: order.id,
+        status: OrderStatus.RETURNED,
+        description: desc,
+        location: 'Remetente',
+        event_origin: dto.event_origin ?? 'ADMIN',
+        user_id: dto.user_id,
+        recipient_name: recebidoPor,
+        timestamp: now,
+        parent_hash: parentHash,
+        hash,
+      },
+      ...order.history,
+    ],
+  });
+}
+
+/**
+ * A encomenda sai de um armazém numa transferência entre filiais (§ 3.36).
+ *
+ * Difere de `requestWarehouseShipment` no essencial: aquela é a última perna —
+ * a encomenda sai PARA O DESTINATÁRIO e vai a `out_for_delivery`. Esta é um
+ * movimento interno: vai a `in_transit` e **perde o armazém**, porque durante o
+ * percurso não está em nenhum. Deixá-la a contar na ocupação da origem daria um
+ * inventário que não corresponde ao que lá está.
+ *
+ * @param {string} orderId
+ * @param {{ transfer_code?: string, user_id?: string }} [dto]
+ * @returns {Promise<object>}
+ */
+async function leaveWarehouseForTransfer(orderId, dto = {}) {
+  const order = await OrderRepository.findById(orderId);
+  if (!order) throw new OrderNotFoundError(orderId);
+  if (order.current_status !== OrderStatus.AT_WAREHOUSE) {
+    throw new WarehouseActionError(order.current_status);
+  }
+
+  const atualizado = await updateOrderStatus(orderId, {
+    new_status:   OrderStatus.IN_TRANSIT,
+    notes:        `Transferência entre filiais${dto.transfer_code ? ` (${dto.transfer_code})` : ''}`,
+    location:     'Em trânsito entre armazéns',
+    event_origin: 'ADMIN',
+    user_id:      dto.user_id,
+  });
+
+  // Só depois de a transição passar: se o estado não podia mudar, o armazém não
+  // pode ser limpo, ou a encomenda ficava sem localização nenhuma.
+  return OrderRepository.update({ ...atualizado, warehouse_id: undefined, updated_at: new Date().toISOString() });
+}
+
+/**
+ * A encomenda chega ao armazém de destino de uma transferência (§ 3.36).
+ *
+ * Não passa por `receiveIntoWarehouse` de propósito: aquela verifica capacidade
+ * e recusa. Aqui o camião já descarregou — recusar seria ficção, e a encomenda
+ * ficava sem sítio nenhum no sistema enquanto está fisicamente no chão do
+ * armazém. O excesso de capacidade é reportado pela transferência, não travado.
+ *
+ * @param {string} orderId
+ * @param {{ warehouse_id: string, transfer_code?: string, user_id?: string }} dto
+ * @returns {Promise<object>}
+ */
+async function arriveFromTransfer(orderId, dto) {
+  const order = await OrderRepository.findById(orderId);
+  if (!order) throw new OrderNotFoundError(orderId);
+  if (!dto?.warehouse_id) throw new MissingRequiredFieldError('warehouse_id');
+
+  // Já cá está (releitura de um código repetido na conferência): não há nada a
+  // fazer, e repetir a transição rebentaria a máquina de estados sem razão.
+  if (order.current_status === OrderStatus.AT_WAREHOUSE && order.warehouse_id === dto.warehouse_id) {
+    return order;
+  }
+  if (order.current_status !== OrderStatus.IN_TRANSIT) {
+    throw new WarehouseActionError(order.current_status);
+  }
+
+  const now  = new Date().toISOString();
+  const desc = `Recebida por transferência${dto.transfer_code ? ` (${dto.transfer_code})` : ''}`;
+  const latest = order.history[0];
+  const parentHash = latest ? (latest.hash || GENESIS_HASH) : GENESIS_HASH;
+  const hash = calculateEventHash(OrderStatus.AT_WAREHOUSE, desc, 'Armazém de destino', now, parentHash);
+
+  return OrderRepository.update({
+    ...order,
+    current_status: OrderStatus.AT_WAREHOUSE,
+    warehouse_id:   dto.warehouse_id,
+    updated_at:     now,
+    history: [
+      {
+        id: crypto.randomUUID(),
+        order_id: order.id,
+        status: OrderStatus.AT_WAREHOUSE,
+        description: desc,
+        location: 'Armazém de destino',
+        event_origin: 'ADMIN',
+        user_id: dto.user_id,
+        timestamp: now,
+        parent_hash: parentHash,
+        hash,
+      },
+      ...order.history,
+    ],
+  });
+}
+
 async function requestShipmentByCode(code, dto) {
   const order = await OrderRepository.findByCode(String(code || '').trim().toUpperCase());
   if (!order) throw new OrderNotFoundError(code);
@@ -1160,10 +1534,24 @@ module.exports = {
   listOrders,
   createOrder,
   getOrderTracking,
+  getPodImages,
+  getPodImagesByCode,
   getDriverOrder,
   updateOrderStatus,
   receiveIntoWarehouse,
   requestWarehouseShipment,
+  leaveWarehouseForTransfer,
+  arriveFromTransfer,
+  // Reagendamento e devolução (§ 3.37)
+  rescheduleDelivery,
+  startReturn,
+  confirmReturn,
+  parseScheduleDate,
+  MAX_DELIVERY_ATTEMPTS,
+  VALID_RETURN_REASONS,
+  RETURN_REASON_LABELS,
+  RescheduleError,
+  ReturnStateError,
   requestShipmentByCode,
   deliverOrder,
   failDelivery,

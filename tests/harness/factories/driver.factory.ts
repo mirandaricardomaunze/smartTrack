@@ -9,9 +9,11 @@ export interface TestDriver {
   email: string;
   phone: string;
   vehicle: {
-    type: 'MOTO' | 'CARRO' | 'VAN' | 'CAMINHAO';
+    /** Modal de entrega (§ 3.33) — ver delivery-modal.factory.ts. */
+    type: 'MOTO' | 'MOTOTRICICLO' | 'CARRO' | 'VAN' | 'CAMINHAO';
     plate: string;
     capacity_kg: number;
+    licence_category?: string;
   };
   current_status: 'available' | 'on_route' | 'offline';
   performance_metrics: {

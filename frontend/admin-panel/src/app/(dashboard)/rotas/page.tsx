@@ -17,8 +17,8 @@
  *
  * Fontes de dados:
  *   GET /v1/routes    — rotas otimizadas (adminApi.getRotas)
- *   GET /v1/drivers   — frota + posição GPS (adminApi.getMotoristas)
- *   GET /v1/orders    — pedidos, para enriquecer as paradas (adminApi.getPedidos)
+ *   GET /v1/drivers   — frota + posição GPS (adminApi.getDrivers)
+ *   GET /v1/orders    — pedidos, para enriquecer as paradas (adminApi.getOrders)
  */
 
 import React, { useState, useEffect } from 'react';
@@ -26,6 +26,7 @@ import dynamic from 'next/dynamic';
 import { adminApi, Pedido, BackendDriver, Route, RouteStatus } from '@/services/api';
 import { usePreferences, densityClass } from '@/hooks/usePreferences';
 import { Button, Pagination, StatCard, paginationMeta } from '@/components/ui';
+import DespachoAutomatico from '@/components/DespachoAutomatico';
 
 // Leaflet não funciona no Node/SSR — carregamento dinâmico com ssr:false
 const MapaGPS = dynamic(() => import('@/components/MapaGPS'), { ssr: false, loading: () => (
@@ -48,12 +49,16 @@ const PENDING_STATUSES = [
   'at_warehouse', 'awaiting_destination', 'out_for_delivery',
 ];
 
-/** Abreviatura do veículo (sem emoji): M=Moto, C=Carro, V=Van, CM=Caminhão. */
+/**
+ * Abreviatura do veículo (sem emoji): M=Motociclo, MT=Mototriciclo, C=Carro,
+ * V=Van, CM=Camião. Espelha o catálogo de modais (§ 3.33).
+ */
 const VEHICLE_TAG: Record<string, string> = {
-  MOTO:     'M',
-  CARRO:    'C',
-  VAN:      'V',
-  CAMINHAO: 'CM',
+  MOTO:         'M',
+  MOTOTRICICLO: 'MT',
+  CARRO:        'C',
+  VAN:          'V',
+  CAMINHAO:     'CM',
 };
 
 const FLEET_LABELS: Record<BackendDriver['current_status'], { label: string; badgeClass: string }> = {
@@ -255,8 +260,8 @@ export default function RotasPage() {
       setError('');
 
       const [pedidosResult, motoristasResult, rotasResult] = await Promise.allSettled([
-        adminApi.getPedidos(),
-        adminApi.getMotoristas(),
+        adminApi.getOrders(),
+        adminApi.getDrivers(),
         adminApi.getRotas(),
       ]);
 
@@ -349,6 +354,11 @@ export default function RotasPage() {
           <StatCard label="Sem Atribuição" value={naoAtribuidos.length} helper={<span className={naoAtribuidos.length > 0 ? 'stat-delta-down' : 'stat-delta-up'}>{naoAtribuidos.length > 0 ? 'Requer alocação manual' : 'Nenhum pedido órfão'}</span>} />
         )}
       </div>
+
+      {/* ── Despacho automático (§ 3.38) ──
+          Antes do mapa: distribuir o dia é a primeira coisa que se faz de manhã;
+          ver onde andam os motoristas vem depois. */}
+      <DespachoAutomatico onConfirmed={() => void loadData()} />
 
       {/* ── Mapa ao vivo ── */}
       <div className="card p-0 overflow-hidden">

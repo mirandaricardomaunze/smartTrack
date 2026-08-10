@@ -36,6 +36,7 @@ export interface QuoteInput {
   zone_code: string;
   service?: ServiceLevel;
   cod_amount?: number;     // centavos, se houver COD
+  vehicle_modal?: string;  // § 3.33 — opcional; ausente mantém o preço de base
 }
 
 /** Detalhe do orçamento (linhas + total), tudo em centavos. */
@@ -43,11 +44,18 @@ export interface QuoteBreakdown {
   zone_code: string;
   zone_name: string;
   service: ServiceLevel;
+  vehicle_modal: string | null;
   weight_grams: number;
   base_cents: number;
   weight_cents: number;
   service_cents: number;       // extra do nível de serviço
+  modal_cents: number;         // ajuste do modal (negativo em moto/mototriciclo)
   cod_surcharge_cents: number;
   total_cents: number;
   currency: 'MZN';
+  /** Falso quando o peso não cabe no modal pedido — o orçamento não é recusado. */
+  modal_fits: boolean;
+  modal_reason: string | null;
+  /** Modal mais barato que aguenta o peso — recomendação para o ecrã. */
+  suggested_modal: string | null;
 }

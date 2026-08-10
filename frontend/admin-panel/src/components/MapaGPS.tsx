@@ -33,14 +33,27 @@ import { fetchApi, type UserLocation } from '@/services/api';
 const POLL_INTERVAL_MS = 10_000;      // recarrega posições dos motoristas
 const BROADCAST_INTERVAL_MS = 5_000;  // frequência de envio da minha posição
 
+// Fora do componente de propósito. Enquanto era um literal declarado no corpo,
+// nascia um objeto novo a cada render: o `watchPosition` do efeito de montagem
+// não o via nas dependências (por isso o aviso do react-hooks), e se lá fosse
+// posto o watch era cancelado e reaberto a cada render — o GPS reiniciava a
+// aquisição e a posição do motorista ficava a saltar.
+const GEO_OPTIONS: PositionOptions = { enableHighAccuracy: true, maximumAge: 5_000, timeout: 15_000 };
+
 // ──────────────────────────────────────────────────────────────────────────
-// Fix Leaflet icons (Next.js asset paths issue)
+// Ícones do Leaflet
+//
+// O Leaflet deduz o caminho das imagens a partir do URL do seu próprio CSS —
+// dedução que não sobrevive ao bundler do Next. Daí o `delete _getIconUrl` e o
+// caminho explícito. As imagens são as do pacote npm, copiadas para
+// public/leaflet/: servidas pela aplicação, o mapa continua a desenhar os
+// marcadores quando o cliente está atrás de uma firewall que bloqueia CDNs.
 // ──────────────────────────────────────────────────────────────────────────
 delete (L.Icon.Default.prototype as any)._getIconUrl;
 L.Icon.Default.mergeOptions({
-  iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
-  iconUrl:       'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
-  shadowUrl:     'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
+  iconRetinaUrl: '/leaflet/marker-icon-2x.png',
+  iconUrl:       '/leaflet/marker-icon.png',
+  shadowUrl:     '/leaflet/marker-shadow.png',
 });
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -212,15 +225,13 @@ export default function MapaGPS() {
     setLocating(false);
     if (err.code === err.PERMISSION_DENIED) {
       setGeoDenied(true);
-      setGeoError('Permissão de localização negada. Clique no ícone 🔒 na barra de endereço → Localização → Permitir, e volte a tentar. (Windows: Definições → Privacidade e segurança → Localização deve estar LIGADA e o navegador autorizado.)');
+      setGeoError('Permissão de localização negada. Clique no cadeado à esquerda do endereço → Localização → Permitir, e volte a tentar. (Windows: Definições → Privacidade e segurança → Localização deve estar LIGADA e o navegador autorizado.)');
     } else if (err.code === err.POSITION_UNAVAILABLE) {
       setGeoError('Posição indisponível. No Windows 11, ligue os Serviços de Localização (Definições → Privacidade e segurança → Localização) e permita o acesso ao navegador. Depois clique em "Tentar novamente".');
     } else {
       setGeoError('Tempo esgotado a obter o GPS. Verifique o sinal e clique em "Tentar novamente".');
     }
   }, []);
-
-  const geoOptions: PositionOptions = { enableHighAccuracy: true, maximumAge: 5_000, timeout: 15_000 };
 
   const onGeoSuccess = useCallback((pos: GeolocationPosition) => {
     setLocating(false);
@@ -247,7 +258,7 @@ export default function MapaGPS() {
     }
     setLocating(true);
     setGeoError(null);
-    navigator.geolocation.getCurrentPosition(onGeoSuccess, handleGeoError, geoOptions);
+    navigator.geolocation.getCurrentPosition(onGeoSuccess, handleGeoError, GEO_OPTIONS);
   }, [onGeoSuccess, handleGeoError]);
 
   // ── Ao montar: contexto seguro + estado de permissão + watch contínuo ──
@@ -279,7 +290,7 @@ export default function MapaGPS() {
       .catch(() => { /* Permissions API indisponível — ignorar */ });
 
     setLocating(true);
-    const watchId = navigator.geolocation.watchPosition(onGeoSuccess, handleGeoError, geoOptions);
+    const watchId = navigator.geolocation.watchPosition(onGeoSuccess, handleGeoError, GEO_OPTIONS);
 
     return () => {
       navigator.geolocation.clearWatch(watchId);
@@ -489,9 +500,15 @@ export default function MapaGPS() {
             <p className="text-xs text-amber-200/90 leading-relaxed">{geoError}</p>
           </div>
           <div className="flex items-center gap-2 shrink-0">
-            <button onClick={requestLocation} disabled={locating} className="btn btn-secondary btn-sm">
-              {locating ? 'A localizar...' : 'Tentar novamente'}
-            </button>
+            {/* Com a permissão negada de forma persistente, `getCurrentPosition`
+                falha de imediato e sem pedir nada ao utilizador: o botão só
+                gastava cliques. Enquanto a definição do navegador não mudar, o
+                caminho que resolve é marcar a posição no mapa. */}
+            {!geoDenied && (
+              <button onClick={requestLocation} disabled={locating} className="btn btn-secondary btn-sm">
+                {locating ? 'A localizar...' : 'Tentar novamente'}
+              </button>
+            )}
             <button
               onClick={() => setManualMode((m) => !m)}
               className={`btn btn-sm ${manualMode ? 'btn-primary' : 'btn-ghost'}`}

@@ -27,7 +27,65 @@ const DEFAULT_COMPANY_ID = 'company-default';
  * @param {Function} fn
  */
 function runWithCompany(companyId, fn) {
-  return als.run({ companyId: companyId ?? null }, fn);
+  return als.run({ companyId: companyId ?? null, correlationId: null }, fn);
+}
+
+/**
+ * Executa `fn` com empresa E id de correlação no contexto (spec § 3.31).
+ *
+ * PORQUÊ O MESMO AsyncLocalStorage: um segundo ALS obrigaria a um segundo
+ * `run()` a embrulhar cada requisição, e bastaria alguém trocar a ordem para o
+ * contexto de dentro perder o de fora. Um só armazém tem um só ponto de entrada.
+ *
+ * @param {{ companyId?: string|null, correlationId?: string|null }} ctx
+ * @param {Function} fn
+ */
+function runWithContext(ctx, fn) {
+  return als.run({
+    companyId:     ctx.companyId ?? null,
+    correlationId: ctx.correlationId ?? null,
+  }, fn);
+}
+
+/**
+ * Id de correlação da requisição em curso.
+ *
+ * Serve para ligar entre si a linha de log, o evento de auditoria, o erro
+ * gravado e o `X-Request-Id` que o cliente viu — sem ele, investigar uma queixa
+ * é procurar por hora e torcer para não haver duas.
+ *
+ * @returns {string|null} null quando não há requisição (tarefa de fundo, teste).
+ */
+function getCorrelationId() {
+  const store = als.getStore();
+  return store ? (store.correlationId ?? null) : null;
+}
+
+/**
+ * Fixa o âmbito de filial da requisição em curso (spec § 3.45).
+ *
+ * ESCRITO DEPOIS DO `run()` e não como argumento dele: as filiais são lidas da
+ * base de dados, o que só pode acontecer já dentro do contexto. O armazém é um
+ * objeto criado por requisição — mutá-lo não atravessa requisições.
+ *
+ * PORQUÊ AQUI E NÃO NUM SEGUNDO ALS: pela mesma razão que o id de correlação —
+ * bastaria alguém trocar a ordem dos dois `run()` para o contexto de dentro
+ * perder o de fora.
+ *
+ * @param {string[]|null} branches lista vazia ou null = sem restrição
+ */
+function setBranchScope(branches) {
+  const store = als.getStore();
+  if (store) store.branches = Array.isArray(branches) && branches.length ? branches : null;
+}
+
+/**
+ * Âmbito de filial da requisição.
+ * @returns {string[]|null} null = vê a empresa inteira
+ */
+function readBranchScope() {
+  const store = als.getStore();
+  return store?.branches ?? null;
 }
 
 /**
@@ -55,4 +113,14 @@ function readCompanyId() {
   return typeof cid === 'string' ? cid : undefined;
 }
 
-module.exports = { runWithCompany, getCompanyId, writeCompanyId, readCompanyId, DEFAULT_COMPANY_ID };
+module.exports = {
+  runWithCompany,
+  runWithContext,
+  getCompanyId,
+  getCorrelationId,
+  setBranchScope,
+  readBranchScope,
+  writeCompanyId,
+  readCompanyId,
+  DEFAULT_COMPANY_ID,
+};

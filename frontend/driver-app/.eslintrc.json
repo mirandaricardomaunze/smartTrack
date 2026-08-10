@@ -1,0 +1,24 @@
+// ESLint da aplicação do motorista. Mesmas regras das outras duas — ver a nota
+// longa em frontend/admin-panel/.eslintrc.json.
+//
+// Aqui `@typescript-eslint/no-floating-promises` seria a regra mais valiosa,
+// porque esta aplicação grava em IndexedDB e sincroniza em segundo plano, e uma
+// promessa não esperada perde a entrega sem qualquer sinal. Não está ligada
+// porque exige `parserOptions.project` (lint com informação de tipos), que
+// multiplica o tempo de execução. Fica registado como decisão consciente, não
+// como esquecimento.
+{
+  "extends": "next/core-web-vitals",
+  "rules": {
+    "no-console": ["warn", { "allow": ["warn", "error", "info"] }],
+    "eqeqeq": ["error", "smart"],
+    "prefer-const": "error"
+  },
+  "overrides": [
+    {
+      "files": ["**/*.spec.ts", "**/*.spec.tsx", "**/*.test.ts", "**/*.test.tsx"],
+      "rules": { "no-console": "off" }
+    }
+  ],
+  "ignorePatterns": ["node_modules/", ".next/", "next-env.d.ts", "public/sw.js"]
+}

@@ -5,6 +5,12 @@
     "allowJs": true,
     "skipLibCheck": true,
     "strict": true,
+    // Código morto é apanhado aqui e não no ESLint: a regra type-aware entende
+    // posições de tipo (um `import type` usado só numa anotação não é "não
+    // usado"), e o eslint-config-next não traz o plugin que faria o mesmo.
+    // O prefixo _ marca o que fica de propósito por assinar uma interface.
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
     "noEmit": true,
     "esModuleInterop": true,
     "module": "esnext",

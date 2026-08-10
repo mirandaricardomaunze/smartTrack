@@ -16,6 +16,7 @@ const {
   requireRoles,
   InvalidCredentialsError,
   CompanySuspendedError,
+  AccountBlockedError,
   ValidationError,
   EmailInUseError,
 } = require('../application/auth.service');
@@ -24,7 +25,7 @@ const passwordReset = require('../application/password-reset.service');
 const router = Router();
 
 function handleError(err, res) {
-  const known = [InvalidCredentialsError, CompanySuspendedError, ValidationError, EmailInUseError, passwordReset.PasswordResetError];
+  const known = [InvalidCredentialsError, CompanySuspendedError, AccountBlockedError, ValidationError, EmailInUseError, passwordReset.PasswordResetError];
   if (known.some((E) => err instanceof E)) {
     return res.status(err.statusCode).json({ error: err.message });
   }

@@ -20,6 +20,7 @@ import {
   type CreateClientData,
 } from '@/services/api';
 import { Button, Card, Input, Select, PageHeader, StatCard, DataTable, Pagination } from '@/components/ui';
+import ContratosCliente from '@/components/ContratosCliente';
 
 const STATUS_PT: Record<string, string> = {
   created: 'Criado', collected: 'Coletado', in_transit: 'Em Trânsito', at_warehouse: 'No Armazém',
@@ -277,7 +278,13 @@ export default function ClientesPage() {
                 </div>
               )}
 
-              <div>
+              {/* Contratos antes do histórico: a condição acordada é o que quem
+                  atende precisa de ver primeiro para responder ao cliente. */}
+              <div className="border-t border-white/[0.06] pt-3">
+                <ContratosCliente clientRefId={detail.id} />
+              </div>
+
+              <div className="border-t border-white/[0.06] pt-3">
                 <h3 className="text-sm font-bold text-slate-200 mb-2">Histórico de encomendas</h3>
                 {detailLoading ? (
                   <p className="text-xs text-slate-500 py-4 text-center">A carregar...</p>

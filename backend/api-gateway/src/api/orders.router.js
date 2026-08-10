@@ -16,6 +16,8 @@ const {
   listOrders,
   createOrder,
   getOrderTracking,
+  getPodImages,
+  getPodImagesByCode,
   getDriverOrder,
   updateOrderStatus,
   requestWarehouseShipment,
@@ -36,6 +38,12 @@ const {
   OtpInvalidError,
   OtpExpiredError,
   OtpMaxAttemptsError,
+  // Reagendamento e devolução (§ 3.37)
+  rescheduleDelivery,
+  startReturn,
+  confirmReturn,
+  RescheduleError,
+  ReturnStateError,
 } = require('../application/orders.service');
 
 const { OrderRepository } = require('../infrastructure/pg.repository');
@@ -71,6 +79,8 @@ function handleError(err, res) {
     OtpInvalidError,
     OtpExpiredError,
     OtpMaxAttemptsError,
+    RescheduleError,
+    ReturnStateError,
     UnauthorizedError,
     ForbiddenError,
   ];
@@ -101,6 +111,7 @@ router.get('/', requireAuth, requireRoles(['ADMIN', 'SUPPORT']), async (req, res
       search: req.query.search,
       driver_id: req.query.driver_id,
       warehouse_id: req.query.warehouse_id,
+      branch_id: req.query.branch_id,
       cod_status: req.query.cod_status,
       from: req.query.from,
       to: req.query.to,
@@ -139,11 +150,33 @@ router.get('/:id/driver-view', requireAuth, requireRoles(['ADMIN', 'DRIVER']), r
   }
 });
 
+// ─── GET /v1/orders/:id/pod ───────────────────────────────────────────────────
+// Imagens do comprovativo, sob pedido (spec § 3.28). Ficam fora da listagem de
+// propósito: são o objeto mais pesado do sistema e ninguém as quer 25 de cada vez.
+router.get('/:id/pod', requireAuth, requireRoles(['ADMIN', 'SUPPORT']), async (req, res) => {
+  try {
+    res.json(await getPodImages(req.params.id));
+  } catch (err) {
+    handleError(err, res);
+  }
+});
+
 // ─── GET /v1/orders/:code/status ──────────────────────────────────────────────
 router.get('/:code/status', async (req, res) => {
   try {
     const order = await getOrderTracking(req.params.code);
     res.json(order);
+  } catch (err) {
+    handleError(err, res);
+  }
+});
+
+// ─── GET /v1/orders/:code/status/pod ──────────────────────────────────────────
+// Equivalente público, para o portal de rastreio do cliente. Mantém a visibilidade
+// que a prova sempre teve neste ecrã — o que muda é só o momento em que é carregada.
+router.get('/:code/status/pod', async (req, res) => {
+  try {
+    res.json(await getPodImagesByCode(req.params.code));
   } catch (err) {
     handleError(err, res);
   }
@@ -226,6 +259,49 @@ router.post('/:id/delivery-failure', requireAuth, requireRoles(['ADMIN', 'DRIVER
       user_id: req.user.sub,
     });
     res.json(order);
+  } catch (err) {
+    handleError(err, res);
+  }
+});
+
+// ─── POST /v1/orders/:id/reschedule ───────────────────────────────────────────
+// Spec § 3.37: marca nova tentativa, com a data acordada com o destinatário.
+// O motorista pode reagendar: é ele que está à porta a combinar a nova data, e
+// obrigar a passar pelo painel faria a informação chegar tarde ou não chegar.
+router.post('/:id/reschedule', requireAuth, requireRoles(['ADMIN', 'SUPPORT', 'DRIVER']), requireAssignedDriver, async (req, res) => {
+  try {
+    const order = await rescheduleDelivery(req.params.id, {
+      ...req.body,
+      event_origin: req.user.role === 'DRIVER' ? 'DRIVER' : 'ADMIN',
+      user_id: req.user.sub,
+    });
+    res.json(order);
+  } catch (err) {
+    handleError(err, res);
+  }
+});
+
+// ─── POST /v1/orders/:id/return ───────────────────────────────────────────────
+// Spec § 3.37: desiste-se da entrega e a encomenda volta ao remetente.
+// Só ADMIN/SUPPORT: desistir de entregar tem consequência comercial (o COD não
+// é cobrado, pode haver nota de crédito) e não é decisão de quem está na rua.
+router.post('/:id/return', requireAuth, requireRoles(['ADMIN', 'SUPPORT']), async (req, res) => {
+  try {
+    res.json(await startReturn(req.params.id, { ...req.body, user_id: req.user.sub }));
+  } catch (err) {
+    handleError(err, res);
+  }
+});
+
+// ─── POST /v1/orders/:id/return/confirm ───────────────────────────────────────
+// Spec § 3.37: a encomenda chegou de volta — quem a recebeu e quando.
+router.post('/:id/return/confirm', requireAuth, requireRoles(['ADMIN', 'SUPPORT', 'DRIVER']), async (req, res) => {
+  try {
+    res.json(await confirmReturn(req.params.id, {
+      ...req.body,
+      event_origin: req.user.role === 'DRIVER' ? 'DRIVER' : 'ADMIN',
+      user_id: req.user.sub,
+    }));
   } catch (err) {
     handleError(err, res);
   }

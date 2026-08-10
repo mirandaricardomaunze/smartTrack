@@ -1,0 +1,42 @@
+// ESLint do painel administrativo.
+//
+// `next/core-web-vitals` é a base porque as regras que traz apanham defeitos
+// reais e não estilo: dependências em falta em useEffect (a causa habitual de um
+// painel que mostra os dados de um pedido anterior), <img> em vez de next/image,
+// e <a> a navegar para rotas internas (recarrega a aplicação inteira e perde o
+// estado do ecrã).
+//
+// As regras acrescentadas cobrem coisas que já morderam este código:
+//
+//  - no-console limitado a warn/error/info: um `console.log` esquecido num ecrã
+//    de operação escreve dados do cliente na consola do navegador do posto.
+//  - eqeqeq: os identificadores chegam da API como texto e comparar com `==` já
+//    igualou um id numérico a uma string por acidente.
+//
+// CÓDIGO MORTO fica FORA daqui de propósito. O `no-unused-vars` do ESLint base
+// não entende posições de tipo — marcava `import type { Metadata }` como não
+// usado — e a versão que entende vem no @typescript-eslint/eslint-plugin, que o
+// eslint-config-next não traz (só traz o parser). Em vez de acrescentar uma
+// dependência para isso, o trabalho é feito por `noUnusedLocals` e
+// `noUnusedParameters` no tsconfig.json: é type-aware, não engana, e já corre
+// no mesmo `npm run typecheck` que o CI executa.
+//
+// As três aplicações partilham esta configuração de propósito: código move-se
+// entre elas, e uma regra que só existe numa deixa passar o mesmo defeito assim
+// que o ficheiro muda de sítio.
+{
+  "extends": "next/core-web-vitals",
+  "rules": {
+    "no-console": ["warn", { "allow": ["warn", "error", "info"] }],
+    "eqeqeq": ["error", "smart"],
+    "prefer-const": "error"
+  },
+  "overrides": [
+    {
+      // Specs correm em Node, fora do navegador: console é a saída legítima.
+      "files": ["**/*.spec.ts", "**/*.spec.tsx", "**/*.test.ts", "**/*.test.tsx"],
+      "rules": { "no-console": "off" }
+    }
+  ],
+  "ignorePatterns": ["node_modules/", ".next/", "next-env.d.ts"]
+}

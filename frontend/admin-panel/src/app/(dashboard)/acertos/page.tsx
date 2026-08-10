@@ -13,7 +13,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   adminApi,
-  COD_METHOD_LABELS,
   type DriverSettlement,
   type SettlementStats,
   type BackendDriver,
@@ -62,8 +61,8 @@ export default function AcertosPage() {
       const [s, statsData, drv, ords] = await Promise.all([
         adminApi.getSettlements(),
         adminApi.getSettlementStats().catch(() => null),
-        adminApi.getMotoristas().catch(() => [] as BackendDriver[]),
-        adminApi.getPedidos().catch(() => [] as Order[]),
+        adminApi.getDrivers().catch(() => [] as BackendDriver[]),
+        adminApi.getOrders().catch(() => [] as Order[]),
       ]);
       setSettlements(s);
       setStats(statsData);

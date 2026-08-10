@@ -64,6 +64,24 @@ services:
     depends_on: [backend]
     networks: [internal]
 
+  # App do motorista. Estava a faltar aqui, e a falta não era cosmética: sem ela
+  # o motorista não tem por onde marcar a recolha, capturar o comprovativo nem
+  # sincronizar o que fez sem rede. Ou seja, o percurso operacional inteiro
+  # (§ 3.34) ficava a depender de alguém o fazer à mão pelo painel.
+  driver:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.frontend
+      args:
+        APP: driver-app
+        PORT: "3012"
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
+    restart: unless-stopped
+    environment:
+      PORT: "3012"
+    depends_on: [backend]
+    networks: [internal]
+
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
@@ -74,12 +92,13 @@ services:
       DOMAIN_API: ${DOMAIN_API}
       DOMAIN_ADMIN: ${DOMAIN_ADMIN}
       DOMAIN_APP: ${DOMAIN_APP}
+      DOMAIN_DRIVER: ${DOMAIN_DRIVER}
       ACME_EMAIL: ${ACME_EMAIL}
     volumes:
       - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
       - caddy-config:/config
-    depends_on: [backend, admin, client]
+    depends_on: [backend, admin, client, driver]
     networks: [internal]
 
 volumes:

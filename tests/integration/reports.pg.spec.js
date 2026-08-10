@@ -89,9 +89,16 @@ describe.skipIf(!disponivel)('api-gateway · relatórios / analytics · PostgreS
       value: 1000, created_at: iso(3 * DAY), updated_at: iso(3 * DAY),
       history: [{ status: 'failed', description: 'insucesso', location: 'Maputo', timestamp: iso(2 * DAY) }],
     });
-    // D — em trânsito (ativo), sem motorista, criado hoje
+    // D — em trânsito (ativo), sem motorista, criado hoje.
+    //
+    // `iso(0)` e não `iso(1 * H)`: a série de volume agrupa por dia UTC, e
+    // "há uma hora" cai no dia ANTERIOR sempre que a suíte corre na primeira
+    // hora depois da meia-noite UTC. O teste passava 23 horas por dia e falhava
+    // na outra — o pior tipo de teste, porque quem o vê vermelho procura o
+    // defeito no código de produção. Semear no próprio instante de `NOW` faz a
+    // asserção `dayKey(0)` valer por construção, a qualquer hora.
     await seed(D, { current_status: 'in_transit' }, {
-      value: 2000, created_at: iso(1 * H), updated_at: iso(1 * H), history: [],
+      value: 2000, created_at: iso(0), updated_at: iso(0), history: [],
     });
     // E — cancelado, sem motorista, criado há 5 dias
     await seed(E, { current_status: 'cancelled' }, {

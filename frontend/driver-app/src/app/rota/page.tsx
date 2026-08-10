@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { Button, Card, PageHeader } from '@/components/ui';
 import { cacheOrders, countPendingEvents, getCachedOrders, type CachedOrder } from '@/lib/offline/db';
 import { processSyncQueue } from '@/lib/offline/sync';
+import { navigationUrl } from '@/lib/navigation';
 import { authenticatedDriverId, driverApi, formatAddress, type DriverOrder, type DriverRoute } from '@/services/api';
 
 type GpsStatus = 'idle' | 'requesting' | 'active' | 'denied' | 'unavailable';
@@ -112,10 +113,16 @@ export default function RotaPage() {
     {queueCount > 0 && <Card className="flex flex-col gap-3 border-brand-500/20 bg-brand-500/10"><p className="text-xs text-slate-300">{queueCount} evento(s) aguardam confirmação do servidor.</p><Button size="sm" variant="primary" fullWidth onClick={sync} loading={syncing} disabled={!isOnline}>Sincronizar agora</Button></Card>}
     {loading ? <Card className="py-10 text-center text-sm text-slate-500">A carregar rota...</Card> : stops.length === 0 ? <Card className="py-10 text-center text-sm text-slate-500">Nenhuma rota ativa atribuída.</Card> : <div className="flex flex-col gap-3">{stops.sort((a, b) => a.sequence - b.sequence).map((stop) => {
       const order = orders[stop.order_id];
+      const navUrl = navigationUrl(stop, order?.endereco ?? stop.address);
       return <Card key={stop.order_id} className="flex flex-col gap-3">
         <div className="flex items-start justify-between gap-3"><div><span className="font-mono text-xs font-bold text-brand-400">{order?.codigoRastreio ?? stop.order_id}</span><h2 className="mt-1 text-sm font-bold text-slate-200">{order?.cliente ?? 'Entrega atribuída'}</h2></div><span className={`badge ${stop.status === 'delivered' ? 'badge-success' : stop.status === 'failed' ? 'badge-error' : 'badge-info'}`}>{stop.status === 'delivered' ? 'Entregue' : stop.status === 'failed' ? 'Insucesso' : `Parada ${stop.sequence}`}</span></div>
         <p className="text-xs leading-relaxed text-slate-400">{order?.endereco ?? stop.address}</p>
-        {stop.status === 'pending' && <a href={`/entrega/${encodeURIComponent(stop.order_id)}`} className="btn btn-primary btn-sm min-h-10 text-center">Abrir entrega</a>}
+        {stop.status === 'pending' && <div className="grid grid-cols-2 gap-2">
+          {navUrl
+            ? <a href={navUrl} target="_blank" rel="noopener noreferrer" className="btn btn-secondary btn-sm min-h-10 text-center">Navegar</a>
+            : <span className="flex min-h-10 items-center justify-center rounded-xl border border-white/5 text-center text-xs text-slate-600">Sem morada</span>}
+          <a href={`/entrega/${encodeURIComponent(stop.order_id)}`} className="btn btn-primary btn-sm min-h-10 text-center">Abrir entrega</a>
+        </div>}
       </Card>;
     })}</div>}
   </div>;

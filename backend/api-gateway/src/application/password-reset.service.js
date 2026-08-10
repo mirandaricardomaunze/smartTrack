@@ -99,6 +99,23 @@ function buildEmail({ name, link, companyName, ttlMinutes = TTL_MINUTES }) {
 // ─── Casos de uso ────────────────────────────────────────────────────────────
 
 /**
+ * A recuperação por email está disponível nesta instalação?
+ *
+ * Consultado pela página de login para não mostrar "Esqueci a senha" quando o
+ * canal não existe. Não expõe nada sobre nenhuma conta nem o provedor — só se o
+ * caminho está aberto, e por onde ir se não estiver.
+ *
+ * @returns {{ available: boolean, channel: 'email', fallback: string }}
+ */
+function recoveryAvailability() {
+  return {
+    available: !isSimulated(),
+    channel: 'email',
+    fallback: 'Peça ao administrador da sua empresa para reemitir a senha.',
+  };
+}
+
+/**
  * Pede a redefinição. Responde SEMPRE a mesma coisa (ver regra 1); o que varia
  * é o que acontece nos bastidores.
  *
@@ -109,11 +126,27 @@ async function requestReset(dto = {}, context = {}) {
   const email = String(dto.email ?? '').trim().toLowerCase();
   if (!EMAIL_RE.test(email)) throw new PasswordResetError('E-mail inválido.');
 
+  // Sem provedor de email o link não sai da máquina. Em produção, responder
+  // "enviámos as instruções" seria mentira e deixava a pessoa à espera de um
+  // email que ninguém vai enviar; o caminho real é o administrador reemitir a
+  // senha (§ 3.32). Em desenvolvimento o simulador É o meio de teste — devolve
+  // `debug_link` mais abaixo — por isso segue. Não revela nada sobre a conta:
+  // esta condição é do sistema, não de quem pede.
+  if (!recoveryAvailability().available && process.env.NODE_ENV === 'production') {
+    throw new PasswordResetError(
+      'A recuperação por e-mail não está disponível. Peça ao administrador da sua empresa para reemitir a senha.',
+      503,
+    );
+  }
+
   await UserRepository.ensureTable();
   const user = await UserRepository.findByEmailWithHash(email);
 
   // Conta inexistente: sai daqui com a mesma resposta, sem enviar nada.
   if (!user) return { ...NEUTRAL_RESPONSE, delivered: false };
+
+  // Conta suspensa (§ 3.32): recuperar a senha não contorna um acesso cortado.
+  if (user.status === 'blocked') return { ...NEUTRAL_RESPONSE, delivered: false };
 
   // Empresa suspensa: recuperar senha não pode contornar o corte de acesso.
   if (user.company_id) {
@@ -223,6 +256,7 @@ module.exports = {
   evaluateToken,
   buildEmail,
   // Casos de uso
+  recoveryAvailability,
   requestReset,
   checkToken,
   resetPassword,

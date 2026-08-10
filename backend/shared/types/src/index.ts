@@ -9,6 +9,7 @@ export * from './messaging.types';
 export * from './support.types';
 export * from './client.types';
 export * from './pricing.types';
+export * from './delivery-modal.types';
 export * from './invoice.types';
 export * from './company.types';
 export * from './subscription.types';

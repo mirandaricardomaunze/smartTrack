@@ -10,8 +10,11 @@
  *   2. restaura para uma base **descartável** (nunca para a de produção);
  *   3. compara a contagem de linhas das tabelas críticas com o manifesto;
  *   4. **revalida as cadeias de hash** dos documentos fiscais (§ 3.19) e do
- *      registo de auditoria (§ 3.21) na base restaurada — porque um restauro que
- *      traz as linhas mas parte a cadeia não é defensável numa inspeção;
+ *      registo de auditoria (§ 3.21) — porque um restauro que traz as linhas mas
+ *      parte a cadeia não é defensável numa inspeção. Compara **origem com
+ *      restauro**: só reprova a cópia a cadeia que estava íntegra na origem e
+ *      chega partida; a que já vinha partida sai como aviso, porque a cópia
+ *      reproduziu-a fielmente e o problema é do histórico (ver `compareChains`);
  *   5. apaga a base de ensaio.
  *
  * Uso:
@@ -62,6 +65,75 @@ function latestBackup() {
 function fail(message) {
   console.error(`[backup:verify] ❌ ${message}`);
   process.exitCode = 1;
+}
+
+/**
+ * Corre a revalidação das cadeias de hash contra uma base qualquer.
+ *
+ * Num processo à parte, com `PGDATABASE` apontado à base pedida: os módulos do
+ * sistema leem a ligação do ambiente no `require`, e é a única forma de os
+ * apontar a duas bases diferentes na mesma execução.
+ *
+ * @param {string} database
+ * @returns {{ ok: true, fiscal: object[], audit: object[] } | { ok: false, error: string }}
+ */
+function inspectChains(database) {
+  const probe = spawnSync(process.execPath, ['-e', `
+    process.env.PGDATABASE = ${JSON.stringify(database)};
+    const invoices = require(${JSON.stringify(path.resolve(__dirname, '..', 'src/application/invoices.service'))});
+    const audit = require(${JSON.stringify(path.resolve(__dirname, '..', 'src/application/audit.service'))});
+    const pool = require(${JSON.stringify(path.resolve(__dirname, '..', 'src/infrastructure/db'))});
+    (async () => {
+      const fiscal = await invoices.verifyIntegrity();
+      const trail = await audit.verifyIntegrity();
+      console.log(JSON.stringify({
+        fiscal: fiscal.chains.map((c) => ({ id: c.doc_type + '/' + c.series, ok: c.ok })),
+        audit:  trail.chains.map((c) => ({ id: c.company_id, ok: c.ok, gaps: (c.gaps || []).length })),
+      }));
+      await pool.end();
+    })().catch((e) => { console.error(e.message); process.exit(1); });
+  `], { env: pgEnv(database), encoding: 'utf8' });
+
+  const line = String(probe.stdout || '').split('\n').filter((l) => l.trim().startsWith('{')).pop();
+  if (probe.status !== 0 || !line) {
+    return { ok: false, error: String(probe.stderr || '').trim().split('\n')[0] || 'sem resposta' };
+  }
+  return { ok: true, ...JSON.parse(line) };
+}
+
+/**
+ * Compara as cadeias da origem com as da base restaurada.
+ *
+ * PORQUE NÃO BASTA OLHAR PARA A RESTAURADA: uma cadeia partida na origem é
+ * copiada fielmente para o restauro — o restauro fez o seu trabalho, e reprovar
+ * a cópia por causa disso aponta o operador para o sítio errado. Pior: a partir
+ * da primeira quebra, TODAS as verificações de cópia falhariam para sempre, e um
+ * controlo que está sempre vermelho deixa de ser lido. O que reprova a cópia é
+ * uma cadeia que estava íntegra na origem e chega partida ao restauro.
+ *
+ * A origem é lida agora, e a cópia é de um instante anterior: uma cadeia criada
+ * entretanto existe só numa das duas. Por isso o que se compara são as cadeias
+ * presentes em ambas — as restantes contam como pré-existentes, nunca como
+ * culpa do restauro.
+ *
+ * @param {object[]} source
+ * @param {object[]} restored
+ * @returns {{ regressions: string[], preexisting: string[] }}
+ */
+function compareChains(source, restored) {
+  const before = new Map(source.map((c) => [c.id, c.ok]));
+  const regressions = [];
+  const preexisting = [];
+
+  for (const chain of restored) {
+    if (chain.ok) continue;
+    // Ausente na origem: nasceu depois da cópia ou foi removida — em qualquer
+    // dos casos não há termo de comparação, e a dúvida não reprova a cópia.
+    if (before.get(chain.id) === true) regressions.push(chain.id);
+    else preexisting.push(chain.id);
+  }
+
+  return { regressions, preexisting };
 }
 
 function main() {
@@ -126,31 +198,48 @@ function main() {
       }
     }
 
-    // ── 4. Cadeias de hash na base restaurada ────────────────────────────────
+    // ── 4. Cadeias de hash: origem vs restauro ───────────────────────────────
     // É isto que distingue "os dados voltaram" de "o arquivo fiscal continua
-    // defensável". Corre nos módulos do próprio sistema, apontados à base de ensaio.
-    const checks = spawnSync(process.execPath, ['-e', `
-      process.env.PGDATABASE = ${JSON.stringify(SCRATCH_DB)};
-      const invoices = require(${JSON.stringify(path.resolve(__dirname, '..', 'src/application/invoices.service'))});
-      const audit = require(${JSON.stringify(path.resolve(__dirname, '..', 'src/application/audit.service'))});
-      const pool = require(${JSON.stringify(path.resolve(__dirname, '..', 'src/infrastructure/db'))});
-      (async () => {
-        const fiscal = await invoices.verifyIntegrity();
-        const trail = await audit.verifyIntegrity();
-        console.log(JSON.stringify({ fiscal: fiscal.ok, fiscalChains: fiscal.chains.length, audit: trail.ok, auditChains: trail.chains.length }));
-        await pool.end();
-      })().catch((e) => { console.error(e.message); process.exit(1); });
-    `], { env: pgEnv(SCRATCH_DB), encoding: 'utf8' });
-
-    const line = String(checks.stdout || '').split('\n').filter((l) => l.trim().startsWith('{')).pop();
-    if (checks.status !== 0 || !line) {
-      fail(`Não foi possível revalidar as cadeias: ${String(checks.stderr || '').trim().split('\n')[0]}`);
+    // defensável". A pergunta do ensaio é se o RESTAURO parte alguma coisa —
+    // uma cadeia que já vinha partida da origem é um alarme de auditoria, não
+    // um defeito da cópia (ver `compareChains`).
+    const restored = inspectChains(SCRATCH_DB);
+    if (!restored.ok) {
+      fail(`Não foi possível revalidar as cadeias na base restaurada: ${restored.error}`);
     } else {
-      const result = JSON.parse(line);
-      if (result.fiscal) console.info(`[backup:verify] ✅ Cadeia fiscal íntegra (${result.fiscalChains} série(s)).`);
-      else fail('Cadeia fiscal partida na base restaurada.');
-      if (result.audit) console.info(`[backup:verify] ✅ Cadeia de auditoria íntegra (${result.auditChains} empresa(s)).`);
-      else fail('Cadeia de auditoria partida na base restaurada.');
+      const sourceDb = manifest?.database || process.env.PGDATABASE;
+      const source = sourceDb ? inspectChains(sourceDb) : { ok: false, error: 'origem desconhecida' };
+
+      if (!source.ok) {
+        // Sem termo de comparação, volta-se ao critério estrito: só passa com
+        // tudo íntegro. Um ensaio que não sabe comparar não pode ser permissivo.
+        console.warn(`[backup:verify] ⚠️  Origem "${sourceDb}" não pôde ser lida (${source.error}) — a exigir cadeias íntegras.`);
+        if (restored.fiscal.every((c) => c.ok)) console.info(`[backup:verify] ✅ Cadeia fiscal íntegra (${restored.fiscal.length} série(s)).`);
+        else fail('Cadeia fiscal partida na base restaurada.');
+        if (restored.audit.every((c) => c.ok)) console.info(`[backup:verify] ✅ Cadeia de auditoria íntegra (${restored.audit.length} empresa(s)).`);
+        else fail('Cadeia de auditoria partida na base restaurada.');
+      } else {
+        for (const [rotulo, unidade, antes, depois] of [
+          ['fiscal',      'série(s)',  source.fiscal, restored.fiscal],
+          ['de auditoria', 'empresa(s)', source.audit,  restored.audit],
+        ]) {
+          const { regressions, preexisting } = compareChains(antes, depois);
+
+          if (regressions.length > 0) {
+            fail(`Cadeia ${rotulo} partida PELO RESTAURO: ${regressions.join(', ')} — estava íntegra na origem.`);
+          } else if (preexisting.length > 0) {
+            // A cópia é fiel; o histórico é que não está. Dois problemas, dois
+            // destinatários — e este não invalida a cópia.
+            console.warn(
+              `[backup:verify] ⚠️  Cadeia ${rotulo} já partida na origem: ${preexisting.join(', ')}. ` +
+              'A cópia reproduz-a fielmente — investigue o histórico, não esta cópia.',
+            );
+            console.info(`[backup:verify] ✅ Restauro fiel: nenhuma cadeia ${rotulo} partiu no processo (${depois.length} ${unidade}).`);
+          } else {
+            console.info(`[backup:verify] ✅ Cadeia ${rotulo} íntegra (${depois.length} ${unidade}).`);
+          }
+        }
+      }
     }
   } finally {
     // ── 5. Limpeza ───────────────────────────────────────────────────────────
@@ -164,4 +253,4 @@ function main() {
 
 if (require.main === module) main();
 
-module.exports = { main, latestBackup, SCRATCH_DB };
+module.exports = { main, latestBackup, compareChains, SCRATCH_DB };

@@ -19,6 +19,10 @@ export enum OrderStatus {
   DELIVERED             = 'delivered',
   FAILED                = 'failed',
   CANCELLED             = 'cancelled',
+  // Devolvida ao remetente (spec § 3.37). Estado próprio e não `failed` — isso
+  // é uma tentativa — nem `cancelled`, que é uma encomenda que nunca chegou a
+  // seguir. Confundi-los tirava a única forma de contar quantas voltaram.
+  RETURNED              = 'returned',
 }
 
 /**
@@ -30,12 +34,20 @@ export const VALID_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
   [OrderStatus.COLLECTED]:            [OrderStatus.IN_TRANSIT, OrderStatus.FAILED],
   [OrderStatus.IN_TRANSIT]:           [OrderStatus.AT_WAREHOUSE, OrderStatus.OUT_FOR_DELIVERY, OrderStatus.FAILED],
   // DELIVERED a partir do armazém = levantamento ao balcão (spec § 3.23).
-  [OrderStatus.AT_WAREHOUSE]:         [OrderStatus.AWAITING_DESTINATION, OrderStatus.OUT_FOR_DELIVERY, OrderStatus.DELIVERED],
+  // IN_TRANSIT a partir do armazém = transferência entre filiais (spec § 3.36):
+  // a encomenda sai de uma unidade para outra da mesma empresa e, durante o
+  // percurso, não está em armazém nenhum. Faltava porque o modelo assumia um
+  // único armazém; sem esta transição, mover carga entre filiais só era possível
+  // fingindo uma expedição para entrega.
+  [OrderStatus.AT_WAREHOUSE]:         [OrderStatus.AWAITING_DESTINATION, OrderStatus.OUT_FOR_DELIVERY, OrderStatus.DELIVERED, OrderStatus.IN_TRANSIT],
   [OrderStatus.AWAITING_DESTINATION]: [OrderStatus.OUT_FOR_DELIVERY, OrderStatus.DELIVERED, OrderStatus.CANCELLED],
   [OrderStatus.OUT_FOR_DELIVERY]:     [OrderStatus.DELIVERED, OrderStatus.FAILED],
   [OrderStatus.DELIVERED]:            [],
   [OrderStatus.FAILED]:               [OrderStatus.IN_TRANSIT, OrderStatus.CANCELLED],
   [OrderStatus.CANCELLED]:            [],
+  // A encomenda chega de volta ao remetente — de viagem ou parada no armazém
+  // (spec § 3.37). Terminal, como DELIVERED: acabou, mas do outro lado.
+  [OrderStatus.RETURNED]:             [],
 };
 
 export function isValidTransition(from: OrderStatus, to: OrderStatus): boolean {

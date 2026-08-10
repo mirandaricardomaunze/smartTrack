@@ -1,4 +1,14 @@
-# Deploy em produção (VPS + Docker)
+# Deploy em produção (VPS + Docker) — PILHA PARCIAL
+
+> **Não é esta a pilha de produção.** Publica só o app do cliente e a API: fica
+> **sem painel administrativo** e **sem app do motorista**, ou seja, ninguém
+> consegue criar um pedido nem entregar uma encomenda. Serve para levantar
+> depressa um ambiente de demonstração do portal público.
+>
+> A pilha completa é a `docker-compose.yml` da **raiz** com os ficheiros de
+> `deploy/`, documentada em [`docs/deploy/PRODUCTION.md`](../../docs/deploy/PRODUCTION.md).
+> Ela publica API, painel, portal do cliente e app do motorista, e faz o
+> bootstrap das migrações no primeiro arranque.
 
 Publica o **app do cliente** + **backend** + **PostgreSQL** atrás do **Caddy** (HTTPS
 automático). Um único servidor, tudo em containers.

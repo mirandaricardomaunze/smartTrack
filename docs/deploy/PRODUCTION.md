@@ -10,10 +10,16 @@ Spec ref: `docs/spec/especificacao-tecnica-v1.md` §2.4 (multiempresa), §4 (seg
 ## 1. Pré-requisitos
 
 - VPS com Docker + Docker Compose (`docker compose version`).
-- Um domínio e **3 subdomínios** com registos DNS `A` a apontar para o IP do VPS:
+- Um domínio e **4 subdomínios** com registos DNS `A` a apontar para o IP do VPS:
   - `api.exemplo.com`  → API
   - `admin.exemplo.com` → painel administrativo
   - `app.exemplo.com`  → site público do cliente
+  - `motorista.exemplo.com` → app do motorista (PWA)
+
+> **A pilha desta página é a `docker-compose.yml` da raiz + `deploy/`.** Existe uma
+> segunda em `infra/docker/` que publica apenas o cliente e a API — mais antiga e
+> incompleta. Se seguir essa por engano, fica com um sistema sem painel
+> administrativo e sem app do motorista.
 
 ---
 
@@ -29,10 +35,10 @@ Preencha **obrigatoriamente**:
 |---|---|
 | `JWT_SECRET` | **Obrigatório**. `openssl rand -hex 48`. Sem ele, o backend recusa arrancar em produção. |
 | `PGPASSWORD` / `POSTGRES_PASSWORD` | Mesma senha forte para a base. |
-| `CORS_ORIGIN` | `https://admin.exemplo.com,https://app.exemplo.com` |
+| `CORS_ORIGIN` | `https://admin.exemplo.com,https://app.exemplo.com,https://motorista.exemplo.com` — **incluir o domínio do motorista**, ou a app dele abre e não carrega nada. |
 | `SUPERADMIN_EMAIL` / `SUPERADMIN_PASSWORD` | Conta dona da plataforma (>= 8 car.). |
 | `NEXT_PUBLIC_API_URL` | `https://api.exemplo.com` (inlined no build dos frontends). |
-| `DOMAIN_API` / `DOMAIN_ADMIN` / `DOMAIN_APP` | Os subdomínios acima. |
+| `DOMAIN_API` / `DOMAIN_ADMIN` / `DOMAIN_APP` / `DOMAIN_DRIVER` | Os subdomínios acima. |
 | `ACME_EMAIL` | Email para os certificados TLS (Let's Encrypt). |
 
 Opcionais (ficam **simulados** enquanto não definir as chaves):

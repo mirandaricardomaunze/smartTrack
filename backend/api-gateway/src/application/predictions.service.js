@@ -128,7 +128,20 @@ function predict(porSegmento, porZona, zone, service) {
   if (daZona.enough) {
     // Assinalado como recurso: quem lê tem de saber que o número mistura níveis
     // de serviço, e que um expresso pode ser mais rápido do que isto sugere.
-    return { ...daZona, basis: 'zone', zone: zone ?? null, service_level: null };
+    //
+    // `for_service_level` guarda a pergunta a que esta linha responde. Sem ele,
+    // o expresso e o normal da mesma zona produziam duas linhas visualmente
+    // idênticas — mesma zona, mesmos percentis, "todos" no nível de serviço — a
+    // dizer coisas diferentes sobre o prazo, porque cada uma é confrontada com a
+    // promessa do seu nível. Apareceu numa base de demonstração e não havia como
+    // saber qual era qual.
+    return {
+      ...daZona,
+      basis: 'zone',
+      zone: zone ?? null,
+      service_level: null,
+      for_service_level: service ?? 'normal',
+    };
   }
 
   return {

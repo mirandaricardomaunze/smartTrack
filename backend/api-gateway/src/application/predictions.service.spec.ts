@@ -146,6 +146,25 @@ describe('Previsão · escada de recurso', () => {
     expect(p.enough).toBe(true);
   });
 
+  it('should keep saying which question a fallback row answers', () => {
+    // Apareceu numa base de demonstração: expresso e normal da mesma zona caíam
+    // ambos no recurso e produziam duas linhas visualmente idênticas — mesma
+    // zona, mesmos percentis, "todos" no nível de serviço — a dizer coisas
+    // diferentes sobre o prazo, porque cada uma é confrontada com a promessa do
+    // seu nível. Não havia como saber qual era qual.
+    const { porSegmento, porZona } = indexar(PredictionFactory.zonaComRecursoNosDois());
+    const normal = predict(porSegmento, porZona, 'Maputo Cidade', 'normal');
+    const expresso = predict(porSegmento, porZona, 'Maputo Cidade', 'express');
+
+    expect(normal.basis).toBe('zone');
+    expect(expresso.basis).toBe('zone');
+    expect(normal.for_service_level).toBe('normal');
+    expect(expresso.for_service_level).toBe('express');
+    // Os números são mesmo os mesmos — é essa a natureza do recurso. O que não
+    // pode acontecer é as linhas serem indistinguíveis.
+    expect(normal.p50_hours).toBe(expresso.p50_hours);
+  });
+
   it('should stop at "I do not know" instead of using a company average', () => {
     // Aplicar a Nampula o que se mediu em Maputo é uma afirmação confiante sobre
     // uma rota que ninguém percorreu.

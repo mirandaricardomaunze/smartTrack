@@ -142,6 +142,27 @@ describe('Rentabilidade · margem', () => {
     // margem de 100% real.
     expect(margin(10_000, 0, false).cost_known).toBe(false);
   });
+
+  it('should refuse to state a margin when no cost at all was measured', () => {
+    // Apareceu numa base de demonstração: seis clientes, todos a 100% de margem,
+    // porque nenhuma encomenda tinha rota e portanto não havia custo nenhum.
+    // 100% ali não é uma margem — é aritmética sobre o vazio, e a bandeira de
+    // custo incompleto não chega para desfazer a impressão que o número deixa.
+    expect(margin(10_000, 0, false).margin_pct).toBeNull();
+    expect(margin(10_000, 0, false).profit_cents).toBe(10_000);
+  });
+
+  it('should still state a margin when part of the cost is known', () => {
+    // O caso que continua a valer a pena mostrar: a margem está sobreavaliada,
+    // e o asterisco diz porquê. Deixar de a mostrar aqui perderia informação
+    // útil em vez de evitar uma impressão errada.
+    expect(margin(10_000, 4_000, false).margin_pct).toBe(60);
+  });
+
+  it('should state a zero cost that was actually measured', () => {
+    // Custo medido e igual a zero é um facto, não uma ausência.
+    expect(margin(10_000, 0, true).margin_pct).toBe(100);
+  });
 });
 
 describe('Rentabilidade · cobertura declarada', () => {

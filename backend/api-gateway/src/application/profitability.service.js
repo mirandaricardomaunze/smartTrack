@@ -162,13 +162,21 @@ function margin(revenueCents, costCents, costKnown = true) {
   const custo   = Math.max(0, Math.round(Number(costCents) || 0));
   const lucro   = receita - custo;
 
+  // Nenhum custo medido não dá uma margem de 100% — não dá margem nenhuma. Com
+  // o custo parcialmente conhecido a margem ainda informa (está sobreavaliada, e
+  // o `cost_known` diz porquê); com custo zero e desconhecido, é aritmética
+  // sobre o vazio, e um "100%" num ecrã de gestão sobrevive a qualquer asterisco.
+  const semCustoNenhum = custo === 0 && !costKnown;
+
   return {
     revenue_cents: receita,
     cost_cents:    custo,
     profit_cents:  lucro,
-    margin_pct:    receita === 0 ? null : Math.round((lucro / receita) * 1000) / 10,
-    // Sem isto, uma margem de 100% por falta de dados é indistinguível de uma
-    // margem de 100% real.
+    margin_pct:    receita === 0 || semCustoNenhum
+      ? null
+      : Math.round((lucro / receita) * 1000) / 10,
+    // Sem isto, uma margem de 40% com o combustível por medir seria
+    // indistinguível de uma margem de 40% real.
     cost_known:    Boolean(costKnown),
   };
 }

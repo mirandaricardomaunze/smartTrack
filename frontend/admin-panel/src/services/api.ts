@@ -1289,6 +1289,12 @@ export interface DeliveryPrediction {
   enough: boolean;
   /** `segment` (exato), `zone` (recurso, mistura níveis de serviço) ou null. */
   basis: 'segment' | 'zone' | null;
+  /**
+   * O nível de serviço a que esta linha responde, quando a previsão veio por
+   * recurso à zona. Sem ele, duas linhas com os mesmos percentis seriam
+   * indistinguíveis apesar de terem veredictos diferentes sobre o prazo.
+   */
+  for_service_level?: string;
   reason?: string;
   promise: {
     comparable: boolean;

@@ -89,4 +89,19 @@ export const PredictionFactory = {
       ...this.amostraSuficiente({ service_level: 'express' }),
     ];
   },
+
+  /**
+   * Nenhum dos níveis chega ao mínimo sozinho; juntos chegam.
+   *
+   * É o caso em que AMBAS as linhas saem por recurso à zona, com os mesmos
+   * percentis — e por isso o único que expõe duas linhas indistinguíveis a
+   * dizerem coisas diferentes sobre o prazo.
+   */
+  zonaComRecursoNosDois(): TestDelivery[] {
+    const doze = Array.from({ length: 12 }, (_, i) => 10 + i);
+    return [
+      ...this.deliveries(doze, { service_level: 'normal' }),
+      ...this.deliveries(doze, { service_level: 'express' }),
+    ];
+  },
 };

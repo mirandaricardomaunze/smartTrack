@@ -16,10 +16,12 @@ Spec ref: `docs/spec/especificacao-tecnica-v1.md` §2.4 (multiempresa), §4 (seg
   - `app.exemplo.com`  → site público do cliente
   - `motorista.exemplo.com` → app do motorista (PWA)
 
-> **A pilha desta página é a `docker-compose.yml` da raiz + `deploy/`.** Existe uma
-> segunda em `infra/docker/` que publica apenas o cliente e a API — mais antiga e
-> incompleta. Se seguir essa por engano, fica com um sistema sem painel
-> administrativo e sem app do motorista.
+> **A pilha desta página é a `docker-compose.yml` da raiz + `deploy/`, e é a
+> única.** Existiu uma segunda em `infra/docker/`, que publicava só o cliente e a
+> API; foi removida em vez de mantida a par, porque duas pilhas de produção
+> divergem sempre — e aquela já tinha divergido, ficando sem painel
+> administrativo e sem app do motorista. O que resta em `infra/docker/` é
+> infraestrutura de desenvolvimento e não publica nada.
 
 ---
 

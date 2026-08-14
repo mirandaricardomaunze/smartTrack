@@ -1,80 +1,53 @@
-# Deploy em produção (VPS + Docker) — PILHA PARCIAL
+# Infraestrutura local de desenvolvimento
 
-> **Não é esta a pilha de produção.** Publica só o app do cliente e a API: fica
-> **sem painel administrativo** e **sem app do motorista**, ou seja, ninguém
-> consegue criar um pedido nem entregar uma encomenda. Serve para levantar
-> depressa um ambiente de demonstração do portal público.
->
-> A pilha completa é a `docker-compose.yml` da **raiz** com os ficheiros de
-> `deploy/`, documentada em [`docs/deploy/PRODUCTION.md`](../../docs/deploy/PRODUCTION.md).
-> Ela publica API, painel, portal do cliente e app do motorista, e faz o
-> bootstrap das migrações no primeiro arranque.
+**Isto não publica a aplicação.** Levanta serviços de apoio em containers para se
+desenvolver contra eles. Para pôr o sistema em produção, a pilha é a
+`docker-compose.yml` da **raiz** com os ficheiros de `deploy/`, documentada em
+[`docs/deploy/PRODUCTION.md`](../../docs/deploy/PRODUCTION.md) — essa publica API,
+painel administrativo, portal do cliente e app do motorista, e trata das
+migrações no primeiro arranque.
 
-Publica o **app do cliente** + **backend** + **PostgreSQL** atrás do **Caddy** (HTTPS
-automático). Um único servidor, tudo em containers.
+> **Existiu aqui uma segunda pilha de produção** (`docker-compose.prod.yml` e os
+> respetivos Dockerfiles). Foi removida. Publicava só a API e o portal do
+> cliente — ficava sem painel e sem app do motorista, ou seja, ninguém conseguia
+> criar um pedido nem entregar uma encomenda — e mandava correr `--reset-core` no
+> primeiro arranque, que **apaga** as tabelas do núcleo, enquanto a pilha
+> principal já deteta a base vazia sozinha e não destrói nada. Duas pilhas de
+> produção divergem sempre; esta já tinha divergido.
 
-## Componentes
-| Serviço | Imagem | Papel |
-|---|---|---|
-| `caddy` | `caddy:2-alpine` | Reverse proxy + HTTPS (Let's Encrypt), portas 80/443 |
-| `client` | `Dockerfile.client` | App do cliente (Next.js standalone) |
-| `backend` | `Dockerfile.backend` | Monólito modular (API `/v1`) |
-| `postgres` | `postgres:15-alpine` | Base de dados (volume persistente) |
+## O que sobe
 
-## Pré-requisitos
-- Um VPS com Docker + Docker Compose e as portas **80/443** abertas.
-- Dois registos DNS a apontar para o IP do servidor:
-  - `cliente.seu-dominio.mz` → site do cliente
-  - `api.seu-dominio.mz` → API
-
-## Passos
-1. **Configurar o ambiente** (segredos ficam fora do git):
-   ```bash
-   cp infra/docker/.env.prod.example infra/docker/.env.prod
-   # editar infra/docker/.env.prod:
-   #   SITE_DOMAIN, API_DOMAIN, NEXT_PUBLIC_API_URL
-   #   PGUSER, PGPASSWORD (openssl rand -base64 24)
-   #   JWT_SECRET (openssl rand -hex 32)
-   #   CORS_ORIGIN=https://cliente.seu-dominio.mz
-   #   TRACK17_API_KEY (opcional — sem ela, rastreio intl usa simulador)
-   ```
-
-2. **Construir e subir** (a partir da raiz do repositório):
-   ```bash
-   docker compose --env-file infra/docker/.env.prod \
-     -f infra/docker/docker-compose.prod.yml up -d --build
-   ```
-
-3. **Criar o schema** (só no primeiro arranque, base vazia):
-   ```bash
-   docker compose --env-file infra/docker/.env.prod \
-     -f infra/docker/docker-compose.prod.yml \
-     run --rm backend npm run migrate -- --reset-core
-   ```
-   Nas migrações seguintes usa `npm run migrate` **sem** `--reset-core`
-   (idempotente; `--reset-core` recria as tabelas do núcleo e **apaga** dados).
-
-4. **Verificar**:
-   ```bash
-   curl https://api.seu-dominio.mz/health          # {"status":"ok",...}
-   # abrir https://cliente.seu-dominio.mz no browser e rastrear um código
-   docker compose -f infra/docker/docker-compose.prod.yml logs -f backend
-   # o log deve indicar: "(produção)", "contas de demonstração DESLIGADAS", "CORS restrito"
-   ```
-
-## Notas de segurança (já aplicadas no código)
-- `NODE_ENV=production` **exige** `JWT_SECRET` (arranque falha sem ele).
-- Contas de demonstração (admin123/…) **desligadas** em produção.
-- CORS restrito a `CORS_ORIGIN`; rate limit em `/v1/auth` e global.
-- O `NEXT_PUBLIC_API_URL` é embutido no **build** do cliente — rebuild se mudar o domínio.
-
-## Atualizar (novo deploy)
 ```bash
-git pull
-docker compose --env-file infra/docker/.env.prod \
-  -f infra/docker/docker-compose.prod.yml up -d --build
+docker compose -f infra/docker/docker-compose.yml up -d
 ```
 
-## Alternativas
-- **Vercel (cliente) + Render/Railway (backend+Postgres):** mais simples, sem gerir servidor.
-  Aponta `NEXT_PUBLIC_API_URL` para a API pública e define as mesmas variáveis de ambiente.
+| Serviço | Porta | Usado pelo código? |
+|---|---|---|
+| `postgres` | 5432 | **Sim** — é a base de todo o sistema |
+| `adminer` | 8091 | Só por pessoas, para espreitar a base |
+| `redis` | 6379 | **Não** — nenhum módulo se liga |
+| `zookeeper` + `kafka` | 2181 / 9092 · 9093 | **Não** — nenhum módulo se liga |
+| `kafka-ui` | 8090 | **Não** — só serve o Kafka acima |
+
+A base deste compose chama-se `sistematrack`; o resto do projeto usa `track`
+(`PGDATABASE`). Quem o usar tem de acertar o `.env`, ou fica a olhar para uma
+base vazia sem perceber porquê.
+
+O `postgres` monta `./init-scripts`, pasta que **não existe** — o Docker cria-a
+vazia e não corre nada. Quem esperar que a base venha pronta fica à espera.
+
+O Redis e o Kafka são de um desenho de microserviços que o projeto não seguiu: o
+backend é um monólito modular num só processo, com eventos em memória (§ 2 da
+spec). Ficam aqui declarados como não usados em vez de darem a impressão de
+fazerem parte do sistema. Se ninguém lhes der uso, o passo seguinte é retirá-los
+— gastam memória e sugerem uma arquitetura que não existe.
+
+## Para desenvolver sem Docker
+
+É o caminho normal e não precisa de nada disto: basta um PostgreSQL acessível e
+as variáveis em `.env` (ver `.env.example` na raiz). Depois:
+
+```bash
+npm run migrate:backend   # cria/atualiza o schema
+npm run dev               # API em :4000, painel :3010, cliente :3011, motorista :3012
+```

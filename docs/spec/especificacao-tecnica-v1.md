@@ -1007,9 +1007,15 @@ construída nem servida por nenhuma pilha de deploy — com o percurso acima
 testado e a funcionar, a operação real continuava a depender de alguém o fazer à
 mão pelo painel. Passa a ter serviço, domínio próprio (uma PWA fica presa à
 origem onde é servida) e entrada no `CORS_ORIGIN`; sem essa entrada a app abre e
-não carrega nada, sem mensagem que o explique. Existem duas pilhas no
-repositório e a de `infra/docker/` é parcial: fica assinalada como tal, para que
-segui-la por engano não produza um sistema sem painel e sem motorista.
+não carrega nada, sem mensagem que o explique.
+
+**Há uma só pilha de produção.** Existiu uma segunda em `infra/docker/`, que
+publicava apenas a API e o portal do cliente. Chegou a ficar assinalada como
+parcial — e um aviso não impede a divergência, só a documenta: aquela pilha já
+tinha perdido o painel e a app do motorista, e mandava correr `--reset-core` no
+primeiro arranque, quando a pilha principal passara a detetar a base vazia sem
+destruir nada. Foi removida. O que sobra em `infra/docker/` é infraestrutura de
+desenvolvimento e não publica nada.
 
 **A migração de raiz é verificada contra uma base vazia.** `migrate-all
 --reset-core` numa base nova tem de produzir exatamente o mesmo esquema da base

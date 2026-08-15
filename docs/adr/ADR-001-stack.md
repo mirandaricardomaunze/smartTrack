@@ -1,8 +1,16 @@
 # ADR-001: Escolha de Stack Tecnológica
 
-**Status:** Accepted
+**Status:** Superseded por [ADR-002](ADR-002-monolito-modular.md) (2026-08)
 **Date:** 2025-07
 **Deciders:** Tech Lead, Arquiteto, CTO
+
+> **Este documento descreve um sistema que não foi construído.** Fica como
+> registo histórico da intenção inicial — é para isso que servem os ADR —, mas
+> não descreve o código: não há NestJS, React Native, Redis, Kafka nem
+> Kubernetes. O que existe é um monólito modular num só processo, com
+> PostgreSQL, e está registado no [ADR-002](ADR-002-monolito-modular.md).
+>
+> Não o siga para provisionar infraestrutura.
 
 ---
 

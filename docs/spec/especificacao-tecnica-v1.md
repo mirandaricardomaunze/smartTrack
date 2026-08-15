@@ -1888,32 +1888,42 @@ mecanismo não se limita a copiar.
 
 ## 5. Arquitetura (Alto Nível)
 
+> **Isto descreve o que existe.** O desenho original previa microserviços com
+> Kafka e Redis; não foi o que se construiu, e a decisão está registada no
+> [ADR-002](../adr/ADR-002-monolito-modular.md).
+
 ```
-[App Cliente]      [App Motorista]      [Painel Admin Web]
-      |                   |                     |
-      +-------------------+---------------------+
-                          |
-                    [API Gateway]
-                    (Auth + Rate Limit)
-                          |
-        +----------+----------+-----------+------------+-----------+
-        |          |          |           |            |           |
-   [orders-   [routes-    [payments-  [notifications- [tracking-  
-   service]   service]    service]    service]        intl-service]
-        |          |          |           |            |
-        +----------+----------+-----------+------------+
-                          |
-              [Event Bus: Kafka / AWS SQS+SNS]
-                          |
-         +----------------+----------------+
-         |                                 |
-  [PostgreSQL]                          [Redis]
-  (transacional)                   (cache + geo realtime)
+[Portal do Cliente]   [App do Motorista]   [Painel Admin]
+     (Next.js)          (Next.js PWA)        (Next.js)
+          |                    |                   |
+          +--------------------+-------------------+
+                               |
+                         [Caddy — HTTPS]
+                               |
+                    ┌──────────────────────┐
+                    │      api-gateway     │   UM processo Node.js
+                    │  auth · rate limit   │
+                    │  contexto de empresa │
+                    ├──────────────────────┤
+                    │ orders  · routes     │   módulos carregados
+                    │ payments · notif.    │   por `require`, não
+                    │ tracking-intl        │   por rede
+                    └──────────────────────┘
+                               |
+                        [PostgreSQL — base `track`]
+
+Eventos: em processo, com envelope completo escrito no log estruturado.
+Sem broker, sem cache externa, sem segundo armazém de estado.
 ```
 
 ### Serviços e Responsabilidades
 
-| Serviço | Responsabilidade |
+Cada um é uma **fronteira de código**, não de processo: vivem em
+`backend/*-service` e são carregados pelo gateway. A separação existe para o
+código não se emaranhar; atravessá-la custa uma chamada de função, não uma
+chamada de rede.
+
+| Módulo | Responsabilidade |
 |---|---|
 | `orders-service` | CRUD de pedidos, timeline de eventos, sync offline |
 | `routes-service` | Otimização de rotas, reotimização dinâmica |
@@ -1925,22 +1935,43 @@ mecanismo não se limita a copiar.
 
 ## 6. Stack Tecnológica
 
-| Camada | Tecnologia |
+| Camada | O que existe hoje |
+|---|---|
+| Portal do cliente / App do motorista | Next.js 14 (a do motorista é PWA instalável) |
+| Painel Admin | Next.js 14 |
+| Backend | Express + JavaScript (CommonJS), um só processo |
+| Base de dados | PostgreSQL 15+, base única `track` |
+| Eventos | Em processo, com envelope escrito no log estruturado |
+| Autenticação | JWT próprio (`auth.service.js`), papéis em `requireRoles` |
+| Mapas | Leaflet + tiles OpenStreetMap; otimização própria (haversine + 2-opt + janelas, § 3.2 e § 3.48) |
+| PDF / código de barras / Excel | Motores próprios, sem dependências (§ 3.20, § 3.15, § 3.44) |
+| Offline do motorista | IndexedDB (§ 3.29) |
+| Observabilidade | Log estruturado próprio + métricas em processo (§ 3.31) |
+| Implantação | Docker Compose + Caddy, um servidor |
+
+**Ligado a serviços externos, com adaptador escrito e credenciais por fornecer:**
+FCM (push), WhatsApp Cloud API, SMS, Resend (email), 17TRACK, gateways de
+pagamento. Todos correm contra simulador enquanto não houver credenciais, e
+dizem-no em `/v1/providers`.
+
+**Deliberadamente ausentes:** Redis, Kafka, Kubernetes, Keycloak, Datadog e
+Google Maps Platform. Ver [ADR-002](../adr/ADR-002-monolito-modular.md).
+
+<details><summary>Tecnologias previstas no desenho original (não usadas)</summary>
+
+| Camada | Previsto em 2025-07 |
 |---|---|
 | App Cliente / Motorista | React Native (multiplataforma) |
-| Painel Admin | Next.js (React) |
 | Backend | NestJS (Node.js) + TypeScript |
-| Banco de dados principal | PostgreSQL 15+ |
 | Cache / Geo realtime | Redis 7+ |
 | Mensageria | Kafka (self-hosted) ou AWS SQS/SNS (managed) |
-| Push Notification | Firebase Cloud Messaging (FCM) |
-| Mapas / Roteirização | Google Maps Platform (Directions API + Route Optimization API) |
-| Pagamentos | Mercado Pago (mercado BR) / Stripe (internacional) |
-| Rastreio Internacional | 17TRACK API (agregador multi-carrier) |
+| Mapas / Roteirização | Google Maps Platform (Directions + Route Optimization) |
 | Infra | AWS/GCP, Docker + Kubernetes (EKS/GKE) |
 | Observabilidade | Datadog ou OpenTelemetry + Grafana |
 | Auth | Keycloak ou AWS Cognito (OAuth2/OIDC) |
 | Offline local DB | SQLite (app motorista) |
+
+</details>
 
 ---
 

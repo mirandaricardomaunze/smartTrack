@@ -8,15 +8,20 @@
  *   eventos financeiros devem incluir order_id, value, gateway e
  *   gateway_transaction_id.
  *
- * ⚠️  KAFKA NÃO ESTÁ LIGADO. O broker está declarado em
- * infra/docker/docker-compose.yml, mas nenhum serviço deste repositório produz
- * ou consome tópicos. Até lá, os eventos são escritos no log em formato
- * estruturado — o suficiente para auditoria e para depurar o fluxo, mas NÃO
- * chegam a nenhum consumidor.
+ * NÃO HÁ BROKER, E É DE PROPÓSITO (ADR-002). O sistema é um monólito modular
+ * num só processo: não há equipas a publicar umas para as outras nem
+ * consumidores independentes, e um Kafka em produção sem nada do outro lado
+ * seria um componente a manter sem problema que resolva. O broker chegou a
+ * estar declarado no compose de desenvolvimento e foi retirado — ninguém se
+ * ligava a ele.
  *
- * Ao ligar o Kafka: substituir o corpo de `publish` por um produtor real e
- * manter o envelope tal como está — os schemas em backend/shared/events/schemas
- * já assumem esta forma.
+ * O QUE ISTO FAZ: escreve cada evento no log em formato estruturado, com
+ * envelope completo. Serve auditoria e depuração do fluxo; NÃO entrega a
+ * consumidor nenhum, e quem precisar de reagir a um evento tem de o fazer em
+ * processo.
+ *
+ * Se um dia houver um consumidor externo real, é este envelope que se liga a um
+ * produtor — os schemas em backend/shared/events/schemas já assumem esta forma.
  */
 'use strict';
 

@@ -60,6 +60,35 @@
 }
 
 @layer components {
+  /* ── Sobreposição de modal ──────────────────────────────────────────────
+   * Um modal mais alto do que a janela ficava com as duas pontas fora do
+   * ecrã — e a de cima INALCANÇÁVEL, porque o contentor `fixed` não fazia
+   * scroll. Quem abria uma ficha com muitos campos via o formulário cortado e
+   * não tinha como chegar ao botão de guardar.
+   *
+   * É a armadilha clássica do flexbox: com `align-items: center`, o que
+   * transborda sai pelos DOIS lados, e a margem que sobra do lado de cima é
+   * negativa — nenhum scroll a alcança.
+   *
+   * `safe center` resolve-o na origem: centra enquanto couber e passa a
+   * alinhar ao topo quando não cabe, deixando o overflow todo para baixo, onde
+   * o scroll chega. Onde o browser não a suportar, a declaração é ignorada e
+   * fica o comportamento de hoje — nunca pior.
+   *
+   * A regra apanha as sobreposições pela combinação de classes que o Tailwind
+   * gera, em vez de obrigar 36 sítios a repetir a correção. Um `Modal`
+   * partilhado seria melhor ainda; até lá, isto impede que o defeito volte por
+   * distração. `tests/harness/modal-overlays.ts` verifica que nenhuma
+   * sobreposição usa um alinhamento que esta regra não cubra. */
+  .fixed.inset-0.items-center,
+  .fixed.inset-0.items-start {
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+  .fixed.inset-0.items-center {
+    align-items: safe center;
+  }
+
   /* ── Card ── */
   .card {
     @apply bg-surface border border-white/[0.06] rounded-2xl p-6

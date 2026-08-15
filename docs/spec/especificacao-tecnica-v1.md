@@ -1837,6 +1837,44 @@ uma janela; e a base da velocidade vem sempre declarada.
 
 ---
 
+### 3.49 Modais alcançáveis
+
+Um formulário com muitos campos abria e ficava com o **topo fora do ecrã**, sem
+maneira de lá chegar. Não era um problema estético: o cabeçalho e, em alguns
+ecrãs, o botão de fechar deixavam de existir para quem estava a olhar.
+
+**É a armadilha clássica do flexbox.** Uma sobreposição `fixed inset-0` com
+`align-items: center` centra o painel; quando ele é mais alto do que a janela, o
+que sobra sai pelos **dois** lados, e a margem que sobra em cima é negativa —
+nenhum scroll a alcança. O modal parece cortado por baixo, e é por cima que está
+o que se perdeu.
+
+**A correção é uma regra, não trinta e seis.** `align-items: safe center` centra
+enquanto couber e alinha ao topo quando não couber, empurrando todo o
+transbordo para baixo, onde o scroll chega. Onde o browser não a suportar, a
+declaração é ignorada e fica o comportamento anterior — nunca pior. A regra
+apanha as sobreposições pela combinação de classes que o Tailwind gera, em vez
+de obrigar cada ecrã a repetir a mesma correção e a esquecer-se dela no ecrã
+seguinte.
+
+**Um componente `Modal` partilhado seria melhor** e continua a ser o destino:
+trinta e seis sobreposições escritas à mão divergem sempre, e algumas vivem em
+ficheiros minificados que não se editam com segurança. A regra global resolve o
+defeito hoje sem tocar nesses ficheiros; a migração fica por fazer, e está dito.
+
+**A regra é frágil de uma maneira específica:** continua a existir e a parecer
+certa enquanto alguém escreve um modal novo com outro alinhamento, que fica de
+fora sem que nada se queixe. Por isso há uma sonda
+(`tests/harness/modal-overlays.ts`) que enumera os alinhamentos realmente usados
+no código e os confronta com os que o CSS declara tratar.
+
+**Critérios de aceitação:** nenhuma sobreposição fica sem forma de alcançar o
+que transborda — ou o painel limita a altura e faz scroll por si, ou o seu
+alinhamento está coberto pela regra; e um alinhamento novo que o CSS não trate
+faz o teste falhar, nomeando o ficheiro e a linha.
+
+---
+
 ## 4. Requisitos Não Funcionais
 
 ### Cópias de segurança e restauro

@@ -86,6 +86,8 @@ export type { JourneyServices, JourneyOptions, JourneyStep } from './journeys/de
 export { readPdfLayout, findOverlaps, findOutsideMargins, describeOverlap } from './pdf-layout';
 export type { PdfTextRun, PdfLayout, MeasureFn } from './pdf-layout';
 export { scanExternalAssets, describeAssetRefs, TILE_HOSTS } from './external-assets';
+export { scanModalOverlays, coveredAlignments, uncoveredOverlays, describeOverlays } from './modal-overlays';
+export type { OverlayRef } from './modal-overlays';
 export type { ExternalAssetRef, ExternalAssetReport, GoogleFontImportRef } from './external-assets';
 
 // Mocks

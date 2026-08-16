@@ -93,6 +93,15 @@
   .card {
     @apply bg-surface border border-white/[0.06] rounded-2xl p-6
            transition-all duration-150 hover:border-white/10;
+    /* NENHUM TEXTO SAI DE UM CARTÃO. Uma palavra que não caiba — um montante,
+     * um email, um código de rastreio, uma matrícula — transbordava para cima
+     * do cartão do lado, e ali não se lê como layout partido: lê-se como o
+     * conteúdo do vizinho.
+     *
+     * `break-word` e não `anywhere`: parte a palavra que não cabe sem alterar o
+     * tamanho mínimo do contentor, por isso não mexe em nenhuma disposição que
+     * hoje esteja correta. Só age quando a alternativa era transbordar. */
+    overflow-wrap: break-word;
   }
   .card-elevated {
     @apply bg-surface-elevated shadow-lg border border-white/[0.08];

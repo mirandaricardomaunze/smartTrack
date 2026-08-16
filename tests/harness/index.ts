@@ -87,6 +87,8 @@ export { readPdfLayout, findOverlaps, findOutsideMargins, describeOverlap } from
 export type { PdfTextRun, PdfLayout, MeasureFn } from './pdf-layout';
 export { scanExternalAssets, describeAssetRefs, TILE_HOSTS } from './external-assets';
 export { scanModalOverlays, coveredAlignments, uncoveredOverlays, describeOverlays } from './modal-overlays';
+export { scanStatGrids, overcrowdedGrids, guaranteesCardWrap, describeGrids, MAX_STAT_COLUMNS } from './card-overflow';
+export type { StatGridRef } from './card-overflow';
 export type { OverlayRef } from './modal-overlays';
 export type { ExternalAssetRef, ExternalAssetReport, GoogleFontImportRef } from './external-assets';
 

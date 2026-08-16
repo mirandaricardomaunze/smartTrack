@@ -1875,6 +1875,45 @@ faz o teste falhar, nomeando o ficheiro e a linha.
 
 ---
 
+### 3.50 Nenhum texto sai de um cartão
+
+`110.500,00 MZN` numa coluna de um sexto saía por cima do cartão do lado. **Ali
+não se lê como layout partido — lê-se como o número do vizinho**, que é a pior
+maneira de um relatório financeiro falhar: não parece avariado, parece errado.
+
+A regra é do sistema inteiro e tem duas partes, de naturezas diferentes.
+
+**A rede: o cartão garante a quebra.** `overflow-wrap: break-word` na classe do
+cartão — e, na app do motorista, que não tem classe própria, no componente. A
+propriedade é **herdada**, por isso cobre também as caixas aninhadas lá dentro,
+como os escalões de antiguidade do § 3.41, que não são cartões por si. Usa-se
+`break-word` e não `anywhere` porque parte a palavra sem alterar o tamanho
+mínimo do contentor: não mexe em nenhuma disposição que hoje esteja correta, e
+só age quando a alternativa era transbordar.
+
+**O plano: a grelha dá largura que chegue.** A rede impede o desastre, mas
+quebrar um montante a meio continua a ser feio. **Máximo de quatro colunas** numa
+grelha de indicadores: num ecrã de 1400px, quatro dão cerca de 280px úteis por
+cartão, onde `1.234.567,89 MZN` cabe a `text-3xl`; em cinco, deixa de caber. Não
+é um número de gosto — é onde a conta muda.
+
+**Sem exceções por página.** A tentação é dispensar a regra onde os cartões só
+levam contagens. Uma regra com exceções caso a caso é uma regra que se desfaz, e
+a página que hoje conta colaboradores é a que amanhã mostra a massa salarial.
+
+- **Verificação:** `tests/harness/card-overflow.ts` lê o código, confirma que
+  cada app declara a garantia e enumera as grelhas de indicadores com colunas a
+  mais. **Ignora comentários** — a primeira versão da sonda dava a regra por
+  cumprida porque o comentário que a explicava continha a palavra procurada, e
+  uma sonda que se satisfaz com a documentação da regra é pior do que não haver
+  sonda.
+
+**Critérios de aceitação:** as três aplicações declaram a garantia no cartão;
+nenhuma grelha de indicadores passa de quatro colunas; e apagar a garantia de
+qualquer uma das apps faz o teste falhar, nomeando-a.
+
+---
+
 ## 4. Requisitos Não Funcionais
 
 ### Cópias de segurança e restauro

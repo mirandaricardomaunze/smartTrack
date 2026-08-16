@@ -60,7 +60,11 @@ export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(function 
   return <div className="w-full">{label && <label htmlFor={textareaId} className="mb-1.5 block text-xs font-semibold text-slate-400">{label}</label>}<textarea ref={ref} id={textareaId} className={clsx('min-h-24 w-full resize-y rounded-xl border border-white/10 bg-surface-elevated p-3 text-sm text-slate-100 outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20', error && 'border-red-500/60', className)} aria-invalid={Boolean(error) || undefined} aria-describedby={error || hint ? helpId : undefined} {...props}/>{(error || hint) && <p id={helpId} className={clsx('mt-1 text-xs', error ? 'text-red-400' : 'text-slate-500')}>{error ?? hint}</p>}</div>;
 });
 
-export function Card({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) { return <div className={clsx('rounded-2xl border border-white/[0.06] bg-surface p-4 sm:p-5', className)} {...props}/>; }
+// `break-words`: nenhum texto sai do cartão. Uma morada comprida ou um código
+// de rastreio transbordavam para fora da caixa — e num telemóvel, onde a
+// largura já é pouca, é onde isso acontece primeiro. Aqui e não no globals.css
+// porque esta app não tem classe `.card`: o estilo vive no componente.
+export function Card({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) { return <div className={clsx('rounded-2xl border border-white/[0.06] bg-surface p-4 sm:p-5 break-words', className)} {...props}/>; }
 export function PageHeader({ title, description, actions }: { title: string; description?: string; actions?: React.ReactNode }) { return <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center"><div><h1 className="text-xl font-bold text-slate-100">{title}</h1>{description && <p className="mt-1 text-sm text-slate-500">{description}</p>}</div>{actions && <div className="flex flex-wrap gap-2">{actions}</div>}</div>; }
 
 export function paginationMeta(totalItems: number, page: number, pageSize: number) { const safeSize=Math.max(1,pageSize); const totalPages=Math.max(1,Math.ceil(totalItems/safeSize)); const currentPage=Math.min(Math.max(1,page),totalPages); return {currentPage,totalPages,start:totalItems===0?0:(currentPage-1)*safeSize+1,end:Math.min(currentPage*safeSize,totalItems)}; }

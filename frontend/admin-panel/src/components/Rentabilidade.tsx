@@ -21,9 +21,11 @@ import {
   type RouteProfit,
   type VehicleProfit,
   type CostCoverage,
+  type ReportCoverage,
 } from '@/services/api';
 import { Button, Card } from '@/components/ui';
 import BotaoExcel from '@/components/BotaoExcel';
+import AvisoCobertura from '@/components/AvisoCobertura';
 
 function mzn(cents: number): string {
   return new Intl.NumberFormat('pt-MZ', { style: 'currency', currency: 'MZN' }).format((cents ?? 0) / 100);
@@ -51,6 +53,9 @@ export default function Rentabilidade() {
   const [rotas, setRotas] = useState<RouteProfit[]>([]);
   const [viaturas, setViaturas] = useState<VehicleProfit[]>([]);
   const [cobertura, setCobertura] = useState<CostCoverage | null>(null);
+  // Quanto do universo foi medido (§ 3.51) — distinto de `cobertura`, que diz
+  // que PARCELAS DE CUSTO entraram na margem (§ 3.40). Duas perguntas.
+  const [amostra, setAmostra] = useState<ReportCoverage | null>(null);
   const [erro, setErro] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -62,14 +67,17 @@ export default function Rentabilidade() {
         const r = await adminApi.getRentabilidadeClientes();
         setClientes(r.clients);
         setCobertura(r.cost_coverage);
+        setAmostra(r.coverage ?? null);
       } else if (aba === 'rotas') {
         const r = await adminApi.getRentabilidadeRotas();
         setRotas(r.routes);
         setCobertura(r.cost_coverage);
+        setAmostra(r.coverage ?? null);
       } else {
         const r = await adminApi.getVehicleProfitability();
         setViaturas(r.vehicles);
         setCobertura(r.cost_coverage);
+        setAmostra(r.coverage ?? null);
       }
     } catch (e) {
       setErro(e instanceof Error ? e.message : 'Não foi possível carregar a rentabilidade.');
@@ -98,6 +106,8 @@ export default function Rentabilidade() {
           <BotaoExcel report="rentabilidade" />
         </div>
       </div>
+
+      <AvisoCobertura coverage={amostra} />
 
       {/* A cobertura antes dos números, sempre. */}
       {cobertura && (

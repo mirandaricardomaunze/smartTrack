@@ -13,9 +13,10 @@
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { adminApi, type DriverPerformance } from '@/services/api';
+import { adminApi, type DriverPerformance, type ReportCoverage } from '@/services/api';
 import { Card } from '@/components/ui';
 import BotaoExcel from '@/components/BotaoExcel';
+import AvisoCobertura from '@/components/AvisoCobertura';
 
 function mzn(cents: number): string {
   return new Intl.NumberFormat('pt-MZ', { style: 'currency', currency: 'MZN' }).format((cents ?? 0) / 100);
@@ -30,6 +31,7 @@ function Taxa({ pct, bom = 90 }: { pct: number | null; bom?: number }) {
 
 export default function DesempenhoMotoristas() {
   const [linhas, setLinhas] = useState<DriverPerformance[]>([]);
+  const [amostra, setAmostra] = useState<ReportCoverage | null>(null);
   const [erro, setErro] = useState('');
   const [loading, setLoading] = useState(true);
 
@@ -37,7 +39,9 @@ export default function DesempenhoMotoristas() {
     setLoading(true);
     setErro('');
     try {
-      setLinhas((await adminApi.getDriverPerformance()).drivers);
+      const r = await adminApi.getDriverPerformance();
+      setLinhas(r.drivers);
+      setAmostra(r.coverage ?? null);
     } catch (e) {
       setErro(e instanceof Error ? e.message : 'Não foi possível carregar o desempenho.');
     } finally {
@@ -60,6 +64,8 @@ export default function DesempenhoMotoristas() {
         </div>
         <BotaoExcel report="desempenho" />
       </div>
+
+      <AvisoCobertura coverage={amostra} />
 
       {erro && <p role="alert" className="text-xs text-red-400">{erro}</p>}
       {loading && <p className="text-xs text-slate-500 py-3 text-center">A calcular...</p>}

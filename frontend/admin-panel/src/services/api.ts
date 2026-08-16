@@ -1114,6 +1114,21 @@ export interface DriverPerformance {
 
 // ─── SLA e ocorrências (spec § 3.42) ─────────────────────────────────────────
 
+/**
+ * Quanto do universo é que um relatório conseguiu medir (spec § 3.51).
+ *
+ * `truncated: true` significa que havia mais e ficou de fora. O ecrã TEM de o
+ * dizer: um número parcial apresentado como total é pior do que não haver
+ * número, porque ninguém desconfia dele.
+ */
+export interface ReportCoverage {
+  counted: number;
+  ceiling: number;
+  truncated: boolean;
+  /** Frase pronta, redigida no backend para os ecrãs não divergirem. */
+  note: string | null;
+}
+
 export interface SlaSummary {
   cumprido: number;
   incumprido: number;
@@ -1125,6 +1140,7 @@ export interface SlaSummary {
   compliance_pct: number | null;
   measured: number;
   zones_with_target: { with_target: number; total: number };
+  coverage?: ReportCoverage;
 }
 
 export type OccurrenceKind =
@@ -2013,17 +2029,17 @@ export const adminApi = {
   // Toda a resposta traz `cost_coverage`: uma margem sem a cobertura declarada é
   // um número que parece completo e não é.
 
-  getRentabilidadeClientes: (): Promise<{ clients: ClientProfit[]; cost_coverage: CostCoverage }> =>
+  getRentabilidadeClientes: (): Promise<{ clients: ClientProfit[]; cost_coverage: CostCoverage; coverage?: ReportCoverage }> =>
     fetchApi('/profitability/clients'),
 
-  getRentabilidadeRotas: (): Promise<{ routes: RouteProfit[]; cost_coverage: CostCoverage }> =>
+  getRentabilidadeRotas: (): Promise<{ routes: RouteProfit[]; cost_coverage: CostCoverage; coverage?: ReportCoverage }> =>
     fetchApi('/profitability/routes'),
 
-  getVehicleProfitability: (): Promise<{ vehicles: VehicleProfit[]; cost_coverage: CostCoverage }> =>
+  getVehicleProfitability: (): Promise<{ vehicles: VehicleProfit[]; cost_coverage: CostCoverage; coverage?: ReportCoverage }> =>
     fetchApi('/profitability/vehicles'),
 
   /** @deprecated Use `getVehicleProfitability`. */
-  getRentabilidadeViaturas: (): Promise<{ vehicles: VehicleProfit[]; cost_coverage: CostCoverage }> =>
+  getRentabilidadeViaturas: (): Promise<{ vehicles: VehicleProfit[]; cost_coverage: CostCoverage; coverage?: ReportCoverage }> =>
     adminApi.getVehicleProfitability(),
 
   // ─── Contas a receber (spec § 3.41) ─────────────────────────────────────────
@@ -2041,7 +2057,7 @@ export const adminApi = {
   // Calculado das encomendas. O cadastro tinha valores fixos que nunca eram
   // recalculados — não são usados.
 
-  getDriverPerformance: (): Promise<{ drivers: DriverPerformance[] }> =>
+  getDriverPerformance: (): Promise<{ drivers: DriverPerformance[]; coverage?: ReportCoverage }> =>
     fetchApi('/drivers/performance'),
 
   getDriverPerformanceById: (id: string): Promise<DriverPerformance> =>

@@ -326,6 +326,9 @@ async function getRouteProfitability(opts = {}) {
   return {
     routes: rotas,
     cost_coverage: coverageFor(custosPorMatricula),
+    // Quantas rotas entraram na conta (§ 3.51). Distinto de `cost_coverage`,
+    // que diz que PARCELAS de custo entraram na margem (§ 3.40).
+    coverage,
   };
 }
 
@@ -335,7 +338,7 @@ async function getRouteProfitability(opts = {}) {
  * @param {{ from?: string, to?: string }} [opts]
  */
 async function getOrderProfitability(opts = {}) {
-  const { routes, cost_coverage } = await getRouteProfitability(opts);
+  const { routes, cost_coverage, coverage: coberturaRotas } = await getRouteProfitability(opts);
 
   // Custo por parada, derivado da repartição igual (ver `splitCostPerStop`).
   const custoPorPedido = new Map();
@@ -384,12 +387,14 @@ async function getOrderProfitability(opts = {}) {
     };
   });
 
-  return { orders, cost_coverage };
+  // As duas consultas truncam de forma independente — a lista de pedidos
+  // entregues cresce mais depressa do que a de rotas.
+  return { orders, cost_coverage, coverage: mergeCoverage(coberturaRotas, coberturaPedidos) };
 }
 
 /** Agrega a rentabilidade dos pedidos por cliente. */
 async function getClientProfitability(opts = {}) {
-  const { orders, cost_coverage } = await getOrderProfitability(opts);
+  const { orders, cost_coverage, coverage } = await getOrderProfitability(opts);
 
   const porCliente = new Map();
   for (const o of orders) {
@@ -412,12 +417,12 @@ async function getClientProfitability(opts = {}) {
     }))
     .sort((a, b) => b.profit_cents - a.profit_cents);
 
-  return { clients, cost_coverage };
+  return { clients, cost_coverage, coverage };
 }
 
 /** Agrega a rentabilidade das rotas por viatura. */
 async function getVehicleProfitability(opts = {}) {
-  const { routes, cost_coverage } = await getRouteProfitability(opts);
+  const { routes, cost_coverage, coverage: coberturaRotas } = await getRouteProfitability(opts);
 
   const porMatricula = new Map();
   for (const r of routes) {
@@ -437,7 +442,7 @@ async function getVehicleProfitability(opts = {}) {
     .map((v) => ({ ...v, ...margin(v.revenue_cents, v.cost_cents, v.fuel_known) }))
     .sort((a, b) => b.profit_cents - a.profit_cents);
 
-  return { vehicles, cost_coverage };
+  return { vehicles, cost_coverage, coverage: coberturaRotas };
 }
 
 /** @param {Map<string, object>} custos */

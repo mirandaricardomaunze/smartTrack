@@ -923,7 +923,7 @@ export default function PedidosPage() {
           type="search"
           aria-label="Buscar pedidos"
           placeholder="Buscar por código, cliente ou motorista..."
-          containerClassName="md:max-w-md"
+          containerClassName="md:flex-1 md:max-w-md"
           value={searchTerm}
           onChange={(event) => {
             setSearchTerm(event.target.value);
@@ -936,10 +936,14 @@ export default function PedidosPage() {
           }
         />
 
-        <div className="grid w-full grid-cols-[minmax(0,1fr)_auto] gap-2 md:w-auto">
+        {/* Flex que embrulha, e não um grid de colunas fixas: o seletor de
+            filial só aparece quando há mais do que uma base (§ 3.45), e um grid
+            de duas colunas empurrava o botão para uma segunda linha assim que
+            ele entrava — defeito que só se via em empresas multifilial. */}
+        <div className="flex w-full flex-wrap items-center gap-2 md:w-auto md:shrink-0">
           <Select
             aria-label="Filtrar por status"
-            containerClassName="md:w-52"
+            containerClassName="min-w-[10rem] flex-1 md:w-52 md:flex-none"
             value={statusFilter}
             onChange={(event) => {
               setStatusFilter(event.target.value);
@@ -954,7 +958,7 @@ export default function PedidosPage() {
           {branches.length > 1 && (
             <Select
               aria-label="Filtrar por filial de origem"
-              containerClassName="md:w-52"
+              containerClassName="min-w-[10rem] flex-1 md:w-52 md:flex-none"
               value={branchFilter}
               onChange={(event) => {
                 setBranchFilter(event.target.value);
@@ -969,6 +973,7 @@ export default function PedidosPage() {
 
           <Button
             variant="secondary"
+            className="shrink-0"
             onClick={loadData}
             leftIcon={
               <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>

@@ -194,7 +194,17 @@
     @apply card flex flex-col gap-3;
   }
   .stat-value {
-    @apply text-3xl font-extrabold text-slate-100 tracking-tight;
+    @apply text-3xl font-extrabold text-slate-100 tracking-tight min-w-0;
+    /* Um valor nunca sai do cartão. "110.500,00 MZN" a 3xl não cabe numa
+     * coluna estreita, e um número que transborda para cima do cartão do lado
+     * não se lê como layout partido — lê-se como o número do vizinho.
+     *
+     * `anywhere` e não `break-word`: um montante é um só token sem espaços, e
+     * `break-word` não o parte. Quebrar um número a meio é feio; escondê-lo ou
+     * sobrepô-lo ao seguinte é pior — e é o que acontecia. A grelha de cada
+     * página é que deve dar largura suficiente para isto nunca ser preciso;
+     * esta regra é a rede, não o plano. */
+    overflow-wrap: anywhere;
   }
   .stat-label {
     @apply text-xs font-medium text-slate-500 uppercase tracking-widest;

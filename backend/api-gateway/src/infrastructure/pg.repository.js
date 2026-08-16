@@ -83,6 +83,12 @@ function rowToOrder(row) {
     // Filial de ORIGEM (§ 3.45) — `null` explícito e não `undefined`: "não se
     // sabe por onde entrou" é uma resposta, e some do JSON se for undefined.
     branch_id:       row.branch_id ?? null,
+    // Janela combinada (§ 3.48). `undefined` e não `null`: uma encomenda sem
+    // janela não tem compromisso nenhum, e um `null` explícito no JSON leria-se
+    // como "campo existe e está vazio".
+    window_start:    row.window_start ? isoOf(row.window_start) : undefined,
+    window_end:      row.window_end ? isoOf(row.window_end) : undefined,
+    delivery_priority: row.delivery_priority ?? undefined,
     pod:             row.pod ?? undefined,
     delivery_otp:    row.delivery_otp ?? undefined,
     cod_amount:      row.cod_amount ?? 0,
@@ -506,8 +512,9 @@ async function insertOrder(executor, order, podMeta) {
         origin, destination, carrier_intl_id, driver_id, route_id, warehouse_id,
         pod, delivery_otp, cod_amount, cod_status, cod, cod_settlement_id,
         value, history, created_at, updated_at, client_ref_id, weight_grams, pricing, company_id,
-        delivery_attempts, next_attempt_on, return_info, branch_id
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30)
+        delivery_attempts, next_attempt_on, return_info, branch_id,
+        window_start, window_end, delivery_priority
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33)
       RETURNING *
     `, [
     order.id,
@@ -544,6 +551,9 @@ async function insertOrder(executor, order, podMeta) {
     // só filial atribuída regista por ela; quem vê a empresa toda não escolhe
     // filial nenhuma, e a encomenda fica sem origem em vez de com uma inventada.
     order.branch_id ?? defaultBranchId(),
+    order.window_start ?? null,
+    order.window_end ?? null,
+    order.delivery_priority ?? null,
   ]);
   return rowToOrder(rows[0]);
 }

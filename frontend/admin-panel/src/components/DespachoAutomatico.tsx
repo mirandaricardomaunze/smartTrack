@@ -114,6 +114,31 @@ export default function DespachoAutomatico({ onConfirmed }: { onConfirmed?: () =
                       fora do agrupamento geográfico.
                     </p>
                   )}
+
+                  {/* Janelas incumpríveis (§ 3.48). Aparecem ANTES de a rota ser
+                      aceite: descobertas depois, o motorista já saiu, e a falha
+                      só se revela à porta do cliente. */}
+                  {r.window_violations && r.window_violations.length > 0 && (
+                    <div className="mt-2 rounded-lg border border-red-500/25 bg-red-500/[0.06] p-2">
+                      <p className="text-[11px] font-semibold text-red-300">
+                        {r.window_violations.length} janela(s) que esta rota não cumpre
+                      </p>
+                      <ul className="mt-0.5 text-[11px] text-red-200/80">
+                        {r.window_violations.slice(0, 4).map((v) => (
+                          <li key={v.order_id ?? v.arrival_at} className="font-mono">
+                            {v.order_id ?? 'parada'} · {Math.round(v.late_minutes / 60) >= 1
+                              ? `${Math.round(v.late_minutes / 60)} h atrasada`
+                              : `${v.late_minutes} min atrasada`}
+                          </li>
+                        ))}
+                      </ul>
+                      <p className="mt-1 text-[10px] text-slate-500">
+                        A encomenda continua na rota — tirá-la fá-la-ia desaparecer da operação. Reveja
+                        a janela com o cliente ou divida a rota.
+                        {r.speed_basis === 'assumed' && ' Hora estimada com velocidade assumida, não medida.'}
+                      </p>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>

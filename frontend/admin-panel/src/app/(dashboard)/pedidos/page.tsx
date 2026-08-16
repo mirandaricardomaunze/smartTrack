@@ -171,6 +171,12 @@ export default function PedidosPage() {
   const [newOrderL, setNewOrderL] = useState('');
   const [newOrderA, setNewOrderA] = useState('');
   const [newOrderKm, setNewOrderKm] = useState('');
+  // Janela combinada com o destinatário (§ 3.48). Vazias por omissão: uma
+  // encomenda sem janela não tem compromisso de hora, e preencher isto por
+  // defeito criaria compromissos que ninguém assumiu.
+  const [newOrderJanelaInicio, setNewOrderJanelaInicio] = useState('');
+  const [newOrderJanelaFim, setNewOrderJanelaFim] = useState('');
+  const [newOrderPrioridade, setNewOrderPrioridade] = useState<'alta' | 'normal' | 'baixa'>('normal');
   const [newOrderZone, setNewOrderZone] = useState('');
   const [newOrderService, setNewOrderService] = useState<ServiceLevel>('normal');
   const [pricingZones, setPricingZones] = useState<PricingZone[]>([]);
@@ -474,6 +480,14 @@ export default function PedidosPage() {
         clientRefId: newOrderClientRefId,
         weightGrams: Math.round((parseFloat(newOrderWeight) || 0) * 1000) || undefined,
         pricing: newOrderQuote ?? undefined,
+        // `datetime-local` devolve hora LOCAL sem fuso ("2026-09-01T14:00").
+        // `new Date(...)` interpreta-a no fuso do browser e `toISOString()`
+        // converte para UTC — que é o que a base guarda. Enviar a cadeia crua
+        // faria o backend lê-la como UTC e a janela combinada para as 14h em
+        // Maputo passaria a valer para as 16h.
+        windowStart: newOrderJanelaInicio ? new Date(newOrderJanelaInicio).toISOString() : undefined,
+        windowEnd: newOrderJanelaFim ? new Date(newOrderJanelaFim).toISOString() : undefined,
+        deliveryPriority: (newOrderJanelaInicio || newOrderJanelaFim) ? newOrderPrioridade : undefined,
       });
 
       await loadData();
@@ -490,6 +504,12 @@ export default function PedidosPage() {
       setNewOrderWeight('');
       setNewOrderQuote(null);
       setNewOrderService('normal');
+      // A janela não fica para a encomenda seguinte: é combinada com UM
+      // destinatário, e herdá-la seria assumir por ele um compromisso que
+      // ninguém lhe pediu.
+      setNewOrderJanelaInicio('');
+      setNewOrderJanelaFim('');
+      setNewOrderPrioridade('normal');
       setIsModalOpen(false);
     } catch (err) {
       setModalError('Falha ao registrar no servidor. Por favor, verifique sua conexão.');
@@ -1276,6 +1296,37 @@ export default function PedidosPage() {
                       onChange={(e: React.ChangeEvent<HTMLInputElement>) => { setNewOrderKm(e.target.value); setNewOrderQuote(null); }} />
                   </div>
                 </div>
+
+                {/* Janela de entrega (§ 3.48). Opcional: sem ela, a rota é
+                    ordenada só por distância, exatamente como antes. Com ela, o
+                    despacho avisa ANTES de aceitar a rota quando a janela não
+                    pode ser cumprida — o motorista não a pode descobrir à porta
+                    do cliente. */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-1">Janela — a partir de</label>
+                    <input type="datetime-local" className="input" value={newOrderJanelaInicio}
+                      onChange={(e: React.ChangeEvent<HTMLInputElement>) => setNewOrderJanelaInicio(e.target.value)} />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-1">Janela — até</label>
+                    <input type="datetime-local" className="input" value={newOrderJanelaFim}
+                      onChange={(e: React.ChangeEvent<HTMLInputElement>) => setNewOrderJanelaFim(e.target.value)} />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-1">Prioridade</label>
+                    <select className="input" value={newOrderPrioridade}
+                      onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setNewOrderPrioridade(e.target.value as 'alta' | 'normal' | 'baixa')}>
+                      <option value="normal">Normal</option>
+                      <option value="alta">Alta</option>
+                      <option value="baixa">Baixa</option>
+                    </select>
+                  </div>
+                </div>
+                <p className="text-[11px] text-slate-600">
+                  Uma só das pontas chega — &quot;a partir das 14h&quot; é uma combinação válida. A prioridade
+                  decide entre paradas igualmente possíveis; nunca faz falhar uma janela.
+                </p>
 
                 <div className="flex items-center justify-between gap-3">
                   <button type="button" onClick={calcularOrcamento} disabled={!newOrderZone || quoting}

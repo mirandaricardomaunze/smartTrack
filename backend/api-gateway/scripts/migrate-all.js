@@ -47,6 +47,7 @@ const moduleMigrations = [
   // Depois da frota: acrescenta `branch_id` a `fleet_vehicles`, que só existe
   // a partir daí.
   ['âmbito de filial', 'api-gateway/src/infrastructure/migrate-branches.js'],
+  ['janelas de entrega', 'api-gateway/src/infrastructure/migrate-delivery-windows.js'],
   ['sincronização', 'orders-service/src/infrastructure/migrate.js'],
   ['rotas', 'routes-service/src/infrastructure/migrate.js'],
   // Depois de `rotas` e de `drivers`: o backfill da empresa vem do motorista.

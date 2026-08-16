@@ -382,7 +382,11 @@ function planDispatch(orders, drivers, opts = {}) {
     });
   }
 
-  return { routes, unassigned, summary: resumo(routes, unassigned, candidatas.length) };
+  // As janelas entram DEPOIS de a carga estar distribuída: a capacidade decide
+  // que encomendas cabem no veículo (§ 3.33), a janela decide a ordem em que
+  // são servidas. Trocar a ordem faria a janela empurrar carga para fora.
+  const comJanelas = routes.map((r) => aplicarJanelas(r, opts));
+  return { routes: comJanelas, unassigned, summary: resumo(comJanelas, unassigned, candidatas.length) };
 }
 
 /** @returns {object} Uma parada do plano. PURA. */
@@ -398,6 +402,12 @@ function paradaDe(order, geolocalizada) {
     // Diz se entrou pelo agrupamento geográfico ou só por capacidade — quem
     // revê o plano precisa de saber onde a proposta é mais fraca.
     geolocated:    geolocalizada,
+    // Janela combinada e prioridade (§ 3.48), passadas ao motor de rotas tal
+    // como vieram. Sem elas o motor ordena só por distância, como antes — não
+    // são inventadas aqui nem preenchidas com um valor plausível.
+    window_start:  order.window_start ?? undefined,
+    window_end:    order.window_end ?? undefined,
+    priority:      order.delivery_priority ?? undefined,
   };
 }
 
@@ -413,6 +423,43 @@ function montarRota(driver, orders, loadGrams, unknownWeight, capacityGrams) {
     load_kg:        loadGrams / 1000,
     unknown_weight: unknownWeight,
     stops:          orders.map((o) => paradaDe(o, Boolean(orderCoords(o)))),
+  };
+}
+
+/**
+ * Ordena as paradas pelas janelas e diz quais não são cumpríveis. PURA.
+ *
+ * AQUI E NÃO SÓ NA CRIAÇÃO DA ROTA: quem revê o plano tem de ver o problema
+ * ANTES de o aceitar. Descoberto depois, o motorista já saiu — e a janela
+ * falhada só aparece à porta do cliente, que é o pior sítio e a pior hora
+ * (§ 3.48).
+ *
+ * Sem janelas em nenhuma parada, devolve a rota exatamente como veio: o
+ * comportamento de quem não usa janelas não muda.
+ *
+ * @param {object} rota
+ * @param {{ departure_at?: string, speed_kmh?: number }} opts
+ */
+function aplicarJanelas(rota, opts = {}) {
+  // `require` à chamada: o motor vive no routes-service e só é preciso quando
+  // há janelas — carregá-lo no topo ligaria os dois módulos sem necessidade.
+  const { hasWindows, orderByWindows } = require('../../../routes-service/src/domain/time-windows');
+  const comCoordenadas = rota.stops.filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lng));
+
+  if (!hasWindows(comCoordenadas) || comCoordenadas.length === 0) return rota;
+
+  const partida = comCoordenadas[0];
+  const r = orderByWindows(comCoordenadas, partida, opts);
+  const semCoordenadas = rota.stops.filter((p) => !Number.isFinite(p.lat) || !Number.isFinite(p.lng));
+
+  return {
+    ...rota,
+    stops: [...r.stops, ...semCoordenadas],
+    arrival_estimates: r.arrival_estimates,
+    // Devolvidas mesmo vazias: a ausência do campo leria-se como "não foram
+    // verificadas", e a lista vazia diz que foram e que cabem todas.
+    window_violations: r.window_violations,
+    speed_basis: r.speed_basis,
   };
 }
 
@@ -464,6 +511,7 @@ module.exports = {
   driverCapacity,
   // Despacho automático (§ 3.38) — puros
   planDispatch,
+  aplicarJanelas,
   orderEligibility,
   orderCoords,
   DISPATCHABLE_STATUSES,

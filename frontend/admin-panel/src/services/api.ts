@@ -134,6 +134,17 @@ export interface CreateOrderData {
   clientRefId?: string;   // ligação a um cliente registado (spec § 3.12)
   weightGrams?: number;   // peso para tarifação (spec § 3.13)
   pricing?: QuoteBreakdown; // detalhe do orçamento aplicado
+  /**
+   * Janela combinada com o destinatário (spec § 3.48), em ISO.
+   *
+   * Ausente por omissão, e é o que mantém seguras as encomendas sem
+   * compromisso: sem janela, o motor de rotas ordena só por distância, como
+   * sempre fez. Uma janela por omissão criaria compromissos que ninguém assumiu.
+   */
+  windowStart?: string;
+  windowEnd?: string;
+  /** `alta` decide entre paradas igualmente possíveis — nunca atropela a janela. */
+  deliveryPriority?: 'alta' | 'normal' | 'baixa';
 }
 
 export type HrEmployeeStatus = 'active' | 'inactive' | 'on_leave';
@@ -1040,6 +1051,22 @@ export interface DispatchRoute {
   /** Paradas sem peso registado — não consomem capacidade nem são recusadas. */
   unknown_weight: number;
   stops: DispatchStop[];
+  /**
+   * Janelas que esta rota NÃO consegue cumprir (spec § 3.48).
+   *
+   * Lista vazia significa "verificadas e todas cabem". Campo ausente significa
+   * que a rota não tem janela nenhuma — são coisas diferentes e o ecrã não as
+   * pode confundir.
+   */
+  window_violations?: Array<{
+    order_id: string | null;
+    window_end: string | null;
+    arrival_at: string;
+    late_minutes: number;
+  }>;
+  arrival_estimates?: Array<{ order_id: string | null; arrival_at: string; status: string; wait_minutes: number; late_minutes: number }>;
+  /** `assumed` quando a velocidade não foi medida — a hora estimada é um palpite. */
+  speed_basis?: 'measured' | 'assumed';
 }
 
 /** Encomenda que o plano não conseguiu colocar, com o motivo nomeado. */
@@ -2094,6 +2121,9 @@ export const adminApi = {
       client_ref_id: order.clientRefId,
       weight_grams: order.weightGrams,
       pricing: order.pricing,
+      window_start: order.windowStart,
+      window_end: order.windowEnd,
+      delivery_priority: order.deliveryPriority,
     };
     
     const rawOrder = await fetchApi<BackendOrder>('/orders', {

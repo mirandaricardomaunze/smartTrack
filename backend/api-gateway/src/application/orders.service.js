@@ -213,6 +213,49 @@ async function listOrders(opts = {}) {
  * @param {{ tracking_code: string; client: string; destination: string; value?: number; cod_amount?: number }} dto
  * @returns {Promise<object>} Pedido criado
  */
+/**
+ * Valida e normaliza a janela de entrega combinada. PURA.
+ *
+ * Spec ref: § 3.48
+ *
+ * PORQUE VALIDA EM VEZ DE ACEITAR O QUE VIER: uma janela invertida — fim antes
+ * do início — não é impossível de guardar, é impossível de CUMPRIR. Guardada,
+ * produziria uma violação garantida em todas as rotas onde a encomenda entrasse,
+ * e o motorista descobriria à porta do cliente que nunca houve hora possível.
+ *
+ * SÓ UMA DAS PONTAS TAMBÉM SERVE. "Depois das 14h" e "até às 12h" são
+ * combinações reais, e exigir as duas obrigaria quem regista a inventar a outra.
+ *
+ * @param {{ window_start?: string, window_end?: string, delivery_priority?: string }} dto
+ * @returns {{ window_start?: string, window_end?: string, delivery_priority?: string }}
+ * @throws {MissingRequiredFieldError} quando a janela não pode ser cumprida
+ */
+function normalizeDeliveryWindow(dto) {
+  const instante = (v) => {
+    if (v === null || v === undefined || v === '') return undefined;
+    const t = Date.parse(v);
+    if (!Number.isFinite(t)) throw new MissingRequiredFieldError('window (data inválida)');
+    return new Date(t).toISOString();
+  };
+
+  const inicio = instante(dto?.window_start);
+  const fim = instante(dto?.window_end);
+
+  if (inicio && fim && Date.parse(fim) <= Date.parse(inicio)) {
+    throw new MissingRequiredFieldError('window (o fim tem de ser depois do início)');
+  }
+
+  const prioridade = String(dto?.delivery_priority ?? '').toLowerCase();
+  return {
+    window_start: inicio,
+    window_end: fim,
+    // Prioridade desconhecida cai em `normal` em vez de rebentar: é uma
+    // preferência, e recusar a encomenda inteira por causa dela seria
+    // desproporcionado.
+    delivery_priority: ['alta', 'normal', 'baixa'].includes(prioridade) ? prioridade : undefined,
+  };
+}
+
 async function createOrder(dto) {
   if (!dto.tracking_code) throw new MissingRequiredFieldError('tracking_code');
   if (!dto.client)        throw new MissingRequiredFieldError('client');
@@ -266,6 +309,9 @@ async function createOrder(dto) {
     cod_status:     codAmount > 0 ? 'pending' : 'none',
     weight_grams:   Number.isFinite(Number(dto.weight_grams)) && Number(dto.weight_grams) > 0 ? Math.round(Number(dto.weight_grams)) : undefined,
     pricing:        dto.pricing && typeof dto.pricing === 'object' ? dto.pricing : undefined,
+    // Janela combinada com o destinatário (§ 3.48). Ausente por omissão: sem
+    // ela o motor de rotas comporta-se exatamente como antes.
+    ...normalizeDeliveryWindow(dto),
     value:          typeof dto.value === 'number' ? dto.value : 1990,
     history: [
       {
@@ -1532,6 +1578,7 @@ module.exports = {
   normalizeCollector,
   PICKUPABLE_STATUSES,
   listOrders,
+  normalizeDeliveryWindow,
   createOrder,
   getOrderTracking,
   getPodImages,

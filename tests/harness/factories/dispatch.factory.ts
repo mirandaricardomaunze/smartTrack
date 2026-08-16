@@ -16,6 +16,10 @@ export interface TestDispatchOrder {
   weight_grams?: number;
   /** Coordenadas do destino, quando conhecidas. Sem elas não há agrupamento. */
   coords?: { lat: number; lng: number };
+  /** Janela combinada com o destinatário (§ 3.48). Ausente por omissão. */
+  window_start?: string;
+  window_end?: string;
+  delivery_priority?: 'alta' | 'normal' | 'baixa';
   /** Data marcada de nova tentativa (§ 3.37). No futuro = não entra hoje. */
   next_attempt_on?: string;
 }
@@ -84,6 +88,22 @@ export class DispatchFactory {
   /** Encomenda sem coordenadas: entra por capacidade, fora do agrupamento. */
   static withoutCoords(): TestDispatchOrder {
     return DispatchFactory.order({ coords: undefined });
+  }
+
+  /**
+   * Encomenda com janela combinada (§ 3.48).
+   *
+   * As horas são absolutas e fixas: uma janela relativa a `agora` tornaria o
+   * teste dependente da hora a que corre, e o mesmo teste passaria de manhã e
+   * falharia à tarde.
+   */
+  static withWindow(overrides: Partial<TestDispatchOrder> = {}): TestDispatchOrder {
+    return DispatchFactory.order({
+      window_start: '2026-09-01T07:00:00.000Z',
+      window_end: '2026-09-01T09:00:00.000Z',
+      delivery_priority: 'alta',
+      ...overrides,
+    });
   }
 
   /** Motociclista disponível — 25 kg de teto. */

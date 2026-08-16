@@ -1827,8 +1827,19 @@ uma Directions API o faria.
   `window_start`/`window_end`/`priority` por parada e `departure_at`/`speed_kmh`
   na rota; devolve `arrival_estimates`, `window_violations` e `speed_basis`.
   Sem estes campos, o comportamento é **exatamente** o de hoje.
-- **Frontend admin:** as janelas incumpridas aparecem no despacho, antes de a
-  rota ser aceite. Sem emojis.
+- **Onde a janela é combinada:** no registo do pedido, guardada em
+  `orders.window_start` / `window_end` / `delivery_priority` — `NULL` por
+  omissão. Uma janela invertida é recusada à entrada: não é impossível de
+  guardar, é impossível de **cumprir**, e guardada produziria uma violação
+  garantida em todas as rotas onde a encomenda entrasse. Uma só das pontas
+  chega: "a partir das 14h" é uma combinação real.
+- **Onde a janela é aplicada:** o plano de despacho ordena as paradas de cada
+  rota pelas janelas **depois** de a capacidade decidir que encomendas cabem
+  (§ 3.33). Trocar a ordem faria a janela empurrar carga para fora do veículo.
+- **Frontend admin:** campos de janela e prioridade no registo do pedido, e as
+  janelas incumpríveis no despacho, **antes** de a rota ser aceite — descobertas
+  depois, o motorista já saiu e a falha só aparece à porta do cliente. Sem
+  emojis.
 
 **Critérios de aceitação:** uma rota sem janelas produz o mesmo resultado de
 hoje; uma janela que caberia numa ordem diferente passa a ser cumprida; uma

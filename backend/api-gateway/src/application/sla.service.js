@@ -19,6 +19,18 @@
 
 const pool = require('../infrastructure/db');
 const { readCompanyId } = require('../infrastructure/tenant-context');
+const { queryBounded } = require('../infrastructure/bounded-query');
+
+/**
+ * Teto da amostra de SLA (§ 3.51).
+ *
+ * O cumprimento é avaliado encomenda a encomenda por `evaluateSla`, que depende
+ * do prazo da zona e do nível de serviço — regra complexa de mais para viver
+ * uma segunda vez em SQL. O teto fica, mas passa a vir DITO na resposta: um
+ * relatório que declara sobre quantas encomendas mediu é utilizável; calado, é
+ * uma armadilha.
+ */
+const SLA_CEILING = 2000;
 
 /** Resultados possíveis da avaliação de uma encomenda. */
 const SlaOutcome = Object.freeze({
@@ -152,7 +164,7 @@ async function loadEvaluations(opts = {}) {
   if (opts.to)   { params.push(opts.to);   clauses.push(`o.created_at < $${params.length}`); }
   const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
 
-  const { rows } = await pool.query(`
+  const { rows, coverage } = await queryBounded(`
     SELECT o.id, o.tracking_code, o.current_status, o.created_at, o.updated_at,
            o.pricing ->> 'zone_code' AS zone_code,
            o.pricing ->> 'service'   AS service,
@@ -161,10 +173,9 @@ async function loadEvaluations(opts = {}) {
       LEFT JOIN pricing_zones z ON z.code = o.pricing ->> 'zone_code'
       ${where}
      ORDER BY o.created_at DESC
-     LIMIT 2000
-  `, params);
+  `, params, SLA_CEILING);
 
-  return rows.map((row) => {
+  const evaluations = rows.map((row) => {
     const order = {
       id: row.id,
       tracking_code: row.tracking_code,
@@ -182,13 +193,16 @@ async function loadEvaluations(opts = {}) {
 
     return { ...order, ...evaluateSla(order, zone, agora) };
   });
+
+  return { evaluations, coverage };
 }
 
 /** Resumo do cumprimento no período. */
 async function getSlaSummary(opts = {}) {
-  const avaliadas = await loadEvaluations(opts);
+  const { evaluations: avaliadas, coverage } = await loadEvaluations(opts);
   return {
     ...summarizeSla(avaliadas),
+    coverage,
     // Sem zonas com prazo definido, o indicador não existe — e dizê-lo é mais
     // útil do que mostrar zero.
     zones_with_target: await countZonesWithTarget(),
@@ -197,7 +211,7 @@ async function getSlaSummary(opts = {}) {
 
 /** As encomendas em incumprimento, da que está há mais tempo fora do prazo. */
 async function getSlaBreaches(opts = {}) {
-  const avaliadas = await loadEvaluations(opts);
+  const { evaluations: avaliadas } = await loadEvaluations(opts);
   return avaliadas
     .filter((a) => a.outcome === 'incumprido')
     .sort((a, b) => b.over_by_hours - a.over_by_hours)
@@ -219,6 +233,7 @@ async function countZonesWithTarget() {
 
 module.exports = {
   // Puros
+  SLA_CEILING,
   targetHours,
   evaluateSla,
   summarizeSla,

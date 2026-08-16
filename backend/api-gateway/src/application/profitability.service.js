@@ -26,6 +26,21 @@
 
 const pool = require('../infrastructure/db');
 const { readCompanyId } = require('../infrastructure/tenant-context');
+const { queryBounded, mergeCoverage } = require('../infrastructure/bounded-query');
+
+/**
+ * Teto das rotas consideradas (§ 3.51).
+ *
+ * O custo de uma rota depende do combustível medido entre abastecimentos, o que
+ * obriga a percorrer os abastecimentos de cada viatura — não é uma soma que a
+ * base faça sozinha. O teto fica e passa a vir dito: uma margem calculada sobre
+ * parte da operação e apresentada como o todo é a decisão de preço errada com
+ * cara de relatório.
+ */
+const ROUTE_CEILING = 500;
+
+/** Teto dos pedidos entregues considerados no relatório por pedido. */
+const ORDER_CEILING = 500;
 
 /** Desgaste e manutenção por km. Zero até a empresa o preencher. */
 const UPKEEP_CENTS_PER_KM = Number(process.env.FLEET_UPKEEP_CENTS_PER_KM) || 0;
@@ -268,14 +283,13 @@ async function getRouteProfitability(opts = {}) {
   if (opts.to)   { params.push(opts.to);   clauses.push(`r.created_at < $${params.length}`); }
   const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
 
-  const { rows } = await pool.query(`
+  const { rows, coverage } = await queryBounded(`
     SELECT r.id, r.driver_id, r.distance_km, r.stops, d.name AS driver_name, d.vehicle
       FROM routes r
       LEFT JOIN drivers d ON d.id = r.driver_id
       ${where}
      ORDER BY r.created_at DESC
-     LIMIT 500
-  `, params);
+  `, params, ROUTE_CEILING);
 
   const rotas = [];
   for (const row of rows) {
@@ -346,13 +360,14 @@ async function getOrderProfitability(opts = {}) {
   if (opts.to)   { params.push(opts.to);   clauses.push(`created_at < $${params.length}`); }
   clauses.push(`current_status = 'delivered'`);
 
-  const { rows } = await pool.query(`
+  // Teto próprio, e dito: a lista de pedidos entregues cresce mais depressa do
+  // que a de rotas, e uma delas trunca antes da outra.
+  const { rows, coverage: coberturaPedidos } = await queryBounded(`
     SELECT id, tracking_code, client_id, client_ref_id, value
       FROM orders
      WHERE ${clauses.join(' AND ')}
      ORDER BY updated_at DESC
-     LIMIT 500
-  `, params);
+  `, params, ORDER_CEILING);
 
   const orders = rows.map((row) => {
     const custo = custoPorPedido.get(row.id);
@@ -446,6 +461,8 @@ module.exports = {
   getClientProfitability,
   getVehicleProfitability,
   // Constantes
+  ROUTE_CEILING,
+  ORDER_CEILING,
   UPKEEP_CENTS_PER_KM,
   DRIVER_COST_PER_ROUTE_CENTS,
 };

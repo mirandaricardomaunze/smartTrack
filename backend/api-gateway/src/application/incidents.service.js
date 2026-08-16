@@ -23,6 +23,10 @@
 
 const crypto = require('crypto');
 const pool = require('../infrastructure/db');
+const { queryBounded } = require('../infrastructure/bounded-query');
+
+/** Teto da lista de ocorrências (§ 3.51), dito na resposta. */
+const INCIDENT_CEILING = 200;
 const { readCompanyId, writeCompanyId } = require('../infrastructure/tenant-context');
 const audit = require('./audit.service');
 
@@ -332,12 +336,19 @@ async function listIncidents(opts = {}) {
   if (opts.assignee_id) { params.push(opts.assignee_id); clauses.push(`assignee_id = $${params.length}`); }
 
   const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
-  const { rows } = await pool.query(`
+  // Teto dito e não escondido (§ 3.51). Ocorrências ABERTAS a caírem fora da
+  // lista sem aviso é o pior caso: quem gere pensa que não há mais nada por
+  // resolver, e as que desapareceram são precisamente as que ninguém pegou.
+  const { rows, coverage } = await queryBounded(`
     SELECT * FROM incidents ${where}
      ORDER BY (closed_at IS NULL AND due_at < NOW()) DESC, due_at ASC NULLS LAST, opened_at DESC
-     LIMIT 200
-  `, params);
-  return rows.map(rowToIncident);
+  `, params, INCIDENT_CEILING);
+
+  const lista = rows.map(rowToIncident);
+  // Propriedade não-enumerável: a lista continua a ser um array para quem já a
+  // consome, e a cobertura fica acessível a quem a queira mostrar.
+  Object.defineProperty(lista, 'coverage', { value: coverage, enumerable: false });
+  return lista;
 }
 
 /** Contagens para o painel. */
@@ -369,6 +380,7 @@ module.exports = {
   resolutionDeadline,
   generateIncidentCode,
   normalizeIncident,
+  INCIDENT_CEILING,
   IncidentKind,
   IncidentStatus,
   VALID_TRANSITIONS,

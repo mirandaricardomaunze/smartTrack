@@ -121,6 +121,44 @@ describe.skipIf(!disponivel)('contas a receber · PostgreSQL', () => {
     expect(doContrato).toBe(totals.balance_cents);
   });
 
+  it('should sum in the database exactly as the pure rule sums in memory', async () => {
+    // A agregação em SQL existe para não haver teto (§ 3.51) — e paga-se com uma
+    // segunda implementação da mesma regra de antiguidade. Este é o teste que
+    // torna esse preço aceitável: se as duas divergirem um dia, falha aqui e não
+    // numa reunião de cobrança.
+    const emSql = await naEmpresa(() => receivables.getReceivables(HOJE));
+    const emMemoria = receivables.summarizeReceivables(
+      await naEmpresa(() => receivables.openInvoices()), HOJE,
+    );
+
+    expect(emSql.totals).toEqual(emMemoria.totals);
+    expect(emSql.clients).toEqual(emMemoria.clients);
+  });
+
+  it('should not lose debt beyond the old thousand-invoice ceiling', async () => {
+    // A consulta trazia 1000 faturas e somava-as em memória: acima disso, o total
+    // saía a MENOS e sem aviso, num ecrã onde se decide a quem telefonar.
+    const carteiraAntes = await naEmpresa(() => receivables.getReceivables(HOJE));
+
+    const valores = [];
+    for (let i = 0; i < 1010; i += 1) {
+      valores.push(`('inv-recv-bulk-${i}','FTB${i}','FT','${CLIENTE}','Cliente Devedor','[]'::jsonb,` +
+        `1000,16,0,1000,'issued','${antes(5)}',NOW(),NOW(),NOW(),'${EMPRESA}')`);
+    }
+    await pool.query(`
+      INSERT INTO invoices (id, number, doc_type, client_ref_id, client_name, items,
+        subtotal_cents, tax_rate_pct, tax_cents, total_cents, status, due_date,
+        issued_at, created_at, updated_at, company_id)
+      VALUES ${valores.join(',')}
+    `);
+
+    const depois = await naEmpresa(() => receivables.getReceivables(HOJE));
+
+    expect(depois.totals.balance_cents - carteiraAntes.totals.balance_cents).toBe(1010 * 1000);
+
+    await pool.query(`DELETE FROM invoices WHERE id LIKE 'inv-recv-bulk-%'`);
+  });
+
   it('should not see another company debt', async () => {
     const { clients } = await tenant.runWithCompany('company-itest-recv-outra', () =>
       receivables.getReceivables(HOJE));

@@ -23,6 +23,16 @@
 
 const pool = require('../infrastructure/db');
 const { readCompanyId } = require('../infrastructure/tenant-context');
+const { queryBounded } = require('../infrastructure/bounded-query');
+
+/**
+ * Teto da amostra de desempenho (§ 3.51).
+ *
+ * Alto de propósito: este ecrã decide quem fica com as melhores rotas, e uma
+ * amostra curta dava um retrato injusto de quem trabalhou mais. Acima dele, a
+ * resposta diz que truncou em vez de fingir que viu tudo.
+ */
+const PERFORMANCE_CEILING = 5000;
 
 // ─── Núcleo puro ─────────────────────────────────────────────────────────────
 
@@ -136,7 +146,7 @@ async function loadDriverOrders(opts = {}) {
   if (opts.from) { params.push(opts.from); clauses.push(`o.created_at >= $${params.length}`); }
   if (opts.to)   { params.push(opts.to);   clauses.push(`o.created_at < $${params.length}`); }
 
-  const { rows } = await pool.query(`
+  const { rows, coverage } = await queryBounded(`
     SELECT o.id, o.driver_id, o.current_status, o.created_at, o.updated_at,
            o.delivery_attempts, o.cod_amount, o.cod_status,
            o.pricing ->> 'zone_code' AS zone_code,
@@ -145,10 +155,9 @@ async function loadDriverOrders(opts = {}) {
       FROM orders o
       LEFT JOIN pricing_zones z ON z.code = o.pricing ->> 'zone_code'
      WHERE ${clauses.join(' AND ')}
-     LIMIT 5000
-  `, params);
+  `, params, PERFORMANCE_CEILING);
 
-  return rows.map((row) => {
+  const orders = rows.map((row) => {
     const order = {
       id: row.id,
       current_status: row.current_status,
@@ -167,17 +176,19 @@ async function loadDriverOrders(opts = {}) {
       sla_outcome: sla.evaluateSla(order, zone, agora).outcome,
     };
   });
+
+  return { orders, coverage };
 }
 
 /** Indicadores de um motorista. */
 async function getDriverPerformance(driverId, opts = {}) {
-  const encomendas = await loadDriverOrders({ ...opts, driver_id: driverId });
-  return { driver_id: driverId, ...computePerformance(encomendas) };
+  const { orders: encomendas, coverage } = await loadDriverOrders({ ...opts, driver_id: driverId });
+  return { driver_id: driverId, ...computePerformance(encomendas), coverage };
 }
 
 /** Ranking de todos os motoristas com trabalho atribuído. */
 async function getDriversPerformance(opts = {}) {
-  const encomendas = await loadDriverOrders(opts);
+  const { orders: encomendas, coverage } = await loadDriverOrders(opts);
 
   const porMotorista = new Map();
   for (const o of encomendas) {
@@ -212,10 +223,11 @@ async function getDriversPerformance(opts = {}) {
     }
   }
 
-  return { drivers: rankDrivers(linhas) };
+  return { drivers: rankDrivers(linhas), coverage };
 }
 
 module.exports = {
+  PERFORMANCE_CEILING,
   // Puros
   rate,
   computePerformance,

@@ -1914,6 +1914,48 @@ qualquer uma das apps faz o teste falhar, nomeando-a.
 
 ---
 
+### 3.51 Nenhum relatório trunca em silêncio
+
+Cinco relatórios traziam entre 200 e 5000 linhas com um `LIMIT` escrito à mão e
+somavam-nas em memória. Acima do teto, **o número saía a menos — e saía com o
+aspeto de estar completo**. Uma empresa com 1200 faturas em aberto via um total
+de dívida errado no ecrã onde se decide a quem telefonar.
+
+**É a segunda vez.** O § 3.39 corrigiu exatamente isto no painel, que somava uma
+página de 200 encomendas e a apresentava como a operação inteira. Corrigiu-se
+ali e não se foi ver se o padrão existia noutro lado. Existia, em cinco sítios.
+
+**A correção certa é agregar em SQL.** Com `SUM` e `COUNT FILTER` na base, o
+teto deixa de fazer sentido: a consulta devolve uma linha por cliente, e o custo
+passa a crescer com o número de clientes em vez de com o volume de faturação. É
+o que as contas a receber (§ 3.41) passam a fazer.
+
+**Paga-se com uma segunda implementação da mesma regra**, e só se paga onde a
+regra é simples. A antiguidade da dívida são cinco comparações de datas, e há um
+teste que confronta a versão em SQL com a versão pura sobre as mesmas faturas —
+sem ele, seria a segunda definição de dívida que o § 3.41 existe para evitar.
+Para a avaliação de SLA e o cálculo de desempenho, reescrever a regra em SQL
+criaria duas definições complexas a divergir com o tempo, que é pior do que o
+teto.
+
+**Onde o teto fica, passa a ser dito.** `queryBounded` pede uma linha a mais do
+que o teto: se ela vier, havia mais. A resposta leva `coverage: { counted,
+ceiling, truncated, note }`, e o ecrã diz "medido sobre os N registos mais
+recentes do período". Um relatório que declara o que mediu é utilizável; o mesmo
+relatório calado é uma armadilha.
+
+- **Verificação:** `tests/harness/silent-ceilings.ts` procura `LIMIT` literal
+  fora de `queryBounded` nas camadas de aplicação. Não acusa `LIMIT 1`, que é
+  procurar uma linha, nem `LIMIT ${…}`, que é a paginação do § 3.1 — essa tem
+  contagem total ao lado e não engana ninguém.
+
+**Critérios de aceitação:** nenhuma consulta de relatório usa teto literal fora
+de `queryBounded`; a carteira de dívida soma na base e bate exatamente com a
+regra pura; acrescentar 1010 faturas não perde nenhuma; e repor um teto
+silencioso faz o teste falhar, nomeando o ficheiro e a linha.
+
+---
+
 ## 4. Requisitos Não Funcionais
 
 ### Cópias de segurança e restauro

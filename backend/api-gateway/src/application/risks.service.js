@@ -21,6 +21,11 @@
 const pool = require('../infrastructure/db');
 const { readCompanyId } = require('../infrastructure/tenant-context');
 const predictions = require('./predictions.service');
+const { queryBounded, mergeCoverage } = require('../infrastructure/bounded-query');
+
+/** Tetos das listas de risco (§ 3.51). Ditos na resposta, não escondidos. */
+const IN_FLIGHT_CEILING = 500;
+const ROUTE_SEQUENCE_CEILING = 100;
 
 /** Estados que ainda podem ser salvos — os terminais não entram. */
 const EM_CURSO = ['created', 'collected', 'at_warehouse', 'in_transit', 'out_for_delivery'];
@@ -134,7 +139,7 @@ async function loadInFlight() {
   const cid = readCompanyId();
   if (cid) { params.push(cid); where += ` AND company_id = $${params.length}`; }
 
-  const { rows } = await pool.query(`
+  const { rows, coverage } = await queryBounded(`
     SELECT id, tracking_code, current_status, client_id, driver_id, route_id,
            destination->>'city'                                  AS city,
            COALESCE(pricing->>'zone_name', pricing->>'zone_id')  AS zone,
@@ -143,8 +148,7 @@ async function loadInFlight() {
            EXTRACT(EPOCH FROM (NOW() - updated_at)) / 3600       AS hours_in_status
       FROM orders${where}
      ORDER BY created_at ASC
-     LIMIT 500
-  `, params);
+  `, params, IN_FLIGHT_CEILING);
 
   return rows.map((r) => ({
     ...r,
@@ -199,7 +203,7 @@ async function loadRouteSequences() {
   if (cid) { params.push(cid); where += ` AND r.company_id = $${params.length}`; }
 
   try {
-    const { rows } = await pool.query(`
+    const { rows } = await queryBounded(`
       SELECT r.id AS route_id, r.driver_id, r.stops,
              ARRAY(
                SELECT o.id FROM orders o
@@ -207,8 +211,7 @@ async function loadRouteSequences() {
                 ORDER BY o.updated_at ASC
              ) AS entregues
         FROM routes r${where}
-       LIMIT 100
-    `, params);
+    `, params, ROUTE_SEQUENCE_CEILING);
     return rows;
   } catch {
     // A tabela de rotas vive noutra base em algumas instalações. Sem ela não há
